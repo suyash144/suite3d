@@ -258,6 +258,7 @@ def register_dataset_gpu_from_existing_shifts(
     params,
     dirs,
     summary,
+    existing_summary,
     log_cb=default_log,
     max_gpu_batches=None,
     structural=False,
@@ -274,11 +275,11 @@ def register_dataset_gpu_from_existing_shifts(
 
     min_pix_vals = summary["min_pix_vals"]
     crosstalk_coeff = summary["crosstalk_coeff"]
-    xpad = summary["xpad"]
-    ypad = summary["ypad"]
-    fuse_shift = summary["fuse_shift"]
-    new_xs = summary["new_xs"]
-    old_xs = summary["og_xs"]
+    xpad = existing_summary["xpad"]
+    ypad = existing_summary["ypad"]
+    fuse_shift = existing_summary["fuse_shift"]
+    new_xs = existing_summary["new_xs"]
+    old_xs = existing_summary["og_xs"]
 
     # new parameters
     reference_params = summary["reference_params"]
@@ -406,7 +407,6 @@ def register_dataset_gpu_from_existing_shifts(
                 cavity_size = cavity_size,
                 log_cb=log_cb,
             )
-
             mov_shifted_cpu = mov_shifted_gpu.get()
             log_cb(
                 "Completed rigid registration in %.2f sec" % (time.time() - tic_rigid), 3
