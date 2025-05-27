@@ -584,11 +584,14 @@ class Job:
                 print("Structural registration only implemented for 2D-GPU registration at the moment! Skipping structural registration...")
             else:
                 self.log("Launching registration for structural channel", 0)
-                summary = self.load_summary(structural=True)
-                register_dataset_gpu_from_existing_shifts(self, tifs, params, self.dirs, summary, self.log, structural=True)
+                structural_summary = self.load_summary(structural=True)
+                register_dataset_gpu_from_existing_shifts(self, tifs, params, self.dirs, structural_summary, summary, self.log, structural=True)
 
                 ref_img_3d_structural = self.get_registered_movie("registered_fused_data", "fused", structural=True).mean(axis=1).compute()
                 n.save(os.path.join(self.dirs["summary"], "ref_img_3d_structural.npy"), ref_img_3d_structural)
+
+                ref_img_3d = self.get_registered_movie("registered_fused_data", "fused", structural=False).mean(axis=1).compute()
+                n.save(os.path.join(self.dirs["summary"], "ref_img_3d.npy"), ref_img_3d)
                 
                 if params["clear_registered_structural_data"]:
                     self.log("Clearing registered structural data", 0)
@@ -1119,6 +1122,11 @@ class Job:
         results = self.load_segmentation_results(
             output_dir_name=result_dir_name, to_load=results_to_export
         )
+
+        if self.params["process_structural_channel"] and not self.params["lbm"] and not self.params["faced"]:
+            # Add the structural reference image to the results
+            results["ref_img_3d_structural.npy"] = self.load_file("ref_img_3d_structural.npy", "summary")
+            results["ref_img_3d.npy"] = self.load_file("ref_img_3d.npy", "summary")
 
         # save the parameters that were used for the s3d run
         self.save_file(data=self.params, filename="s3d-params.npy", path=full_export_path)
