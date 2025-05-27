@@ -22,9 +22,7 @@ def choose_init_tifs(
     init_file_pool = n.array(init_file_pool)
 
     if method == "even":
-        sample_file_ids = n.linspace(0, len(init_file_pool), n_init_files + 2, dtype=int)[
-            1:-1
-        ]
+        sample_file_ids = n.linspace(0, len(init_file_pool), n_init_files + 2, dtype=int)[1:-1]
         sample_tifs = n.array(init_file_pool)[sample_file_ids]
     elif method == "random":
         # n.random.seed(seed)
