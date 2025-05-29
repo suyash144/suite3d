@@ -1,9 +1,13 @@
 import os
 import numpy as n
 from matplotlib import pyplot as plt
+from matplotlib import colors
 import copy
 
-
+try:
+    import mrcfile
+except:
+    print("No MRCFile")
 try:
     import napari
 except:
@@ -12,6 +16,8 @@ try:
     import pyqtgraph as pg
 except:
     print("No PyQtGraph")
+
+    
 
 try:
     from napari._qt.widgets.qt_range_slider_popup import QRangeSliderPopup
@@ -64,28 +70,43 @@ def get_percentiles(image, pmin=1, pmax=99, eps=0.0001):
     return vmin, vmax
 
 
-def make_label_vols(stats, shape, lam_max=0.3, iscell=None, cmap="Set3"):
-    coords = [stat["coords"] for stat in stats]
-    lams = [stat["lam"] for stat in stats]
-    cmap = plt.get_cmap(cmap)
-    n_cmap = cmap.N
+def make_label_vols(stats, shape, lam_max=0.3, iscell=None, cmap="Set3", coords=None, lams=None,lam_min = 0):
+
+    if stats is not None:
+        coords = [stat["coords"] for stat in stats]
+        lams = [stat["lam"] for stat in stats]
+        n_roi = len(stats)
+    else:
+        n_roi = len(coords)
+    if type(cmap) == list:
+        n_cmap = len(cmap)
+        cmap_list = copy.copy(cmap)
+        def cmap(idx): 
+            return colors.to_rgb(cmap_list[idx])
+    else:
+        cmap = plt.get_cmap(cmap)
+        n_cmap = cmap.N
     cell_id_vol = n.zeros(shape, int)
     cell_rgb_vol = n.zeros(shape + (4,))
     if iscell is None:
-        iscell = n.ones((len(stats), 2))
+        iscell = n.ones((n_roi, 2))
     if len(iscell.shape) > 1:
         iscell = iscell[:, 0]
-    for i in range(len(stats)):
+    plot_cell_idx = 0
+    for i in range(n_roi):
         if iscell[i]:
             cz, cy, cx = coords[i]
             lam = copy.copy(lams[i])
             # print(lam)3
             lam /= lam_max
             lam[lam > 1] = 1
+            lam[lam < lam_min] = 0
+            # lam[lam < (lam_min / lam_max)] = 0
             cell_id_vol[cz, cy, cx] = i + 1
-            cell_rgb_vol[cz, cy, cx, :3] = cmap(i % n_cmap)[:3]
+            cell_rgb_vol[cz, cy, cx, :3] = cmap(plot_cell_idx % n_cmap)[:3]
             # print(lam)
             cell_rgb_vol[cz, cy, cx, 3] = lam
+            plot_cell_idx += 1
     return cell_id_vol, cell_rgb_vol
 
 
@@ -732,3 +753,11 @@ def fill_cells_vol(coords, fill_vals, shape=None, empty=n.nan, filt=None, squeez
     if expanded and squeeze:
         vols = vols[0]
     return vols
+
+def save_mrc(dir, fname, data, voxel_size, dtype=n.float32):
+    os.makedirs(dir, exist_ok=True)
+    fpath = os.path.join(dir, fname)
+    with mrcfile.new(fpath, overwrite=True) as mrc:
+        print(fpath)
+        mrc.set_data(data.astype(dtype))
+        mrc.voxel_size = voxel_size
