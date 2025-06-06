@@ -61,21 +61,39 @@ class s3dio:
         and anything else that is needed.
         """
         # example use of _update_prms to get the parameters to use for this call
-        todo("This function is not implemented yet. Please implement it before using it!")
+        todo(
+            "This function is not implemented yet. Please implement it before using it!"
+        )
         return mov
 
-    def load_data(self, paths, verbose=True, debug=False, structural=False, **parameters):
+    def load_data(
+        self,
+        paths: list[str],
+        verbose=True,
+        debug=False,
+        structural=False,
+        **parameters,
+    ):
         """
-        A central mechanism for loading data files. This function is meant to be called every
-        single time raw data files are ever loaded, and it will handle all the necessary steps to
-        ensure that the raw data files are loaded correctly depending on the job's parameters (lbm or not),
-        any "local" parameters (like the ones typically passed as kwargs to ``lbmio.load_and_stitch_tifs()``),
-        and anything else that is needed.
+        A central mechanism for loading data files.
+
+        This function is meant to be called every single time raw data files are ever loaded,
+        and it will handle all the necessary steps to ensure that the raw data files are loaded
+        correctly depending on the job's parameters.
+
+        Args:
+            paths (list[str]): list of absolute paths to tiff files
+            verbose (bool, optional): Verbosity. Defaults to True.
+            debug (bool, optional): Debugging mode. Defaults to False.
+            structural (bool, optional): Whether to process the structural channel. Defaults to False.
+            **parameters: Additional parameters for loading the tiffs (inherited from self.job.params in the caller)
         """
         # example use of _update_prms to get the parameters to use for this call
         params = self._update_prms(**parameters)
         _dataloader = self._get_dataloader(params)
-        mov_list = _dataloader(paths, params, verbose=verbose, debug=debug, structural=structural)
+        mov_list = _dataloader(
+            paths, params, verbose=verbose, debug=debug, structural=structural
+        )
         # concatenate movies across time to make a single movie
         mov = n.concatenate(mov_list, axis=1)
 
@@ -85,7 +103,9 @@ class s3dio:
 
         return self._preprocess_data(mov, params)
 
-    def _load_scanimage_tifs(self, paths, params, verbose=True, debug=False, structural=False):
+    def _load_scanimage_tifs(
+        self, paths, params, verbose=True, debug=False, structural=False
+    ):
         """
         Load tifs that are in the standard 2p imaging format from ScanImage.
 
@@ -115,13 +135,16 @@ class s3dio:
         Returns:
             mov (ndarray): the loaded tiff data with shape (planes, frames, y-pixels, x-pixels)
         """
+
         def filter_color_channel(mov):
             if params["num_colors"] > 1:
                 # TODO: make sure that tiffs are 3d when num_colors==1
                 # get functional channel from multi-channel tiff
-                
+
                 if len(mov.shape) == 3:
-                    mov = mov.reshape(-1, params['num_colors'], mov.shape[-2],mov.shape[-1])
+                    mov = mov.reshape(
+                        -1, params["num_colors"], mov.shape[-2], mov.shape[-1]
+                    )
                 elif len(mov.shape) != 4:
                     raise ValueError(
                         f"tiff file is {mov.ndim}D instead of 4D, expecting (frames, colors, y-pixels, x-pixels)"
@@ -135,7 +158,11 @@ class s3dio:
                 # if anyone is using multiple functional color channels, they need to modify the code themselves or raise an
                 # issue to ask for this feature to be implemented. A simple work around is to run the suite3d pipeline multiple
                 # times with different functional color channels and then combine the results however you see fit.
-                color_channel = params["functional_color_channel"] if not structural else params["structural_color_channel"]
+                color_channel = (
+                    params["functional_color_channel"]
+                    if not structural
+                    else params["structural_color_channel"]
+                )
                 mov = n.take(mov, color_channel, axis=1)
             return mov
 
@@ -147,10 +174,16 @@ class s3dio:
             )
 
         # Check preregistration
-        required_preregistration_params = ["frame_counts", "extra_frames", "previous_tif"]
+        required_preregistration_params = [
+            "frame_counts",
+            "extra_frames",
+            "previous_tif",
+        ]
         for param in required_preregistration_params:
             if param not in params:
-                raise ValueError(f"{param} not found in params -- preregister_tifs() must be called before loading tiffs!")
+                raise ValueError(
+                    f"{param} not found in params -- preregister_tifs() must be called before loading tiffs!"
+                )
 
         tic = time.time()
 
@@ -160,25 +193,33 @@ class s3dio:
             if verbose:
                 self.job.log(f"Loading tiff {itif+1}/{len(paths)}: {tif_path}", 2)
 
-            if tif_path not in params["frame_counts"] or tif_path not in params["extra_frames"] or tif_path not in params["previous_tif"]:
-                raise ValueError(f"tif_path {tif_path} not found in frame_counts, extra_frames, or previous_tif - did the list of tifs change somehow?")
-            
+            if (
+                tif_path not in params["frame_counts"]
+                or tif_path not in params["extra_frames"]
+                or tif_path not in params["previous_tif"]
+            ):
+                raise ValueError(
+                    f"tif_path {tif_path} not found in frame_counts, extra_frames, or previous_tif - did the list of tifs change somehow?"
+                )
+
             # Load current tif file
             tif_file = filter_color_channel(tifffile.imread(tif_path))
-            
+
             # Check if frames match expected number of frames
             expected_frames = params["frame_counts"][tif_path]
             if tif_file.shape[0] != expected_frames:
                 raise ValueError(
                     f"tif_path {tif_path} has {tif_file.shape[0]} frames, but preregister_tifs() detected {expected_frames} frames."
-                    "This may be caused by using preregister_tifs() in safe_mode=False which is fast but error prone." 
+                    "This may be caused by using preregister_tifs() in safe_mode=False which is fast but error prone."
                     "Please set tif_preregistration_safe_mode=True in your params and try again."
                     "If that still doesn't work, then either the files have changed or there is inconcsistency in the tif structure!"
                 )
 
             # Get the number of frames in previous tifs
             c_prev_tif = params["previous_tif"][tif_path]
-            frames_from_previous = params["extra_frames"][c_prev_tif] if c_prev_tif else 0
+            frames_from_previous = (
+                params["extra_frames"][c_prev_tif] if c_prev_tif else 0
+            )
 
             if frames_from_previous > 0:
                 # We need to load the previous tif file and add it's extra frames
@@ -188,7 +229,9 @@ class s3dio:
                 else:
                     # We need to load the previous tif file and collect the extra frames
                     prev_tif_file = tifffile.imread(c_prev_tif)
-                    frames_from_previous = filter_color_channel(prev_tif_file[-frames_from_previous:])
+                    frames_from_previous = filter_color_channel(
+                        prev_tif_file[-frames_from_previous:]
+                    )
 
                 tif_file = n.concatenate([frames_from_previous, tif_file], axis=0)
 
@@ -197,10 +240,12 @@ class s3dio:
             check_extra_frames = n_frames_total % params["n_ch_tif"]
             extra_frames_expected = params["extra_frames"][tif_path]
             if check_extra_frames != extra_frames_expected:
-                raise ValueError(f"tif_path {tif_path} has {check_extra_frames} extra frames, but preregister_tifs() detected {extra_frames_expected} frames.")
-            
+                raise ValueError(
+                    f"tif_path {tif_path} has {check_extra_frames} extra frames, but preregister_tifs() detected {extra_frames_expected} frames."
+                )
+
             # Remove extra frames and cache them for later if needed
-            if extra_frames_expected > 0:   
+            if extra_frames_expected > 0:
                 extra_frames = tif_file[-extra_frames_expected:]
                 mov_extra_frames[tif_path] = extra_frames
 
@@ -211,7 +256,7 @@ class s3dio:
                 raise ValueError(
                     f"tiff file is not 3D, expecting (num_frames_not_volume!, y-pixels, x-pixels), but it has shape {tif_file.shape}"
                 )
-            
+
             if debug:
                 print(f":Loading time up to tiff #{itif+1}: {time.time() - tic:.4f} s")
 
@@ -221,13 +266,15 @@ class s3dio:
             if volumes * params["n_ch_tif"] != t:
                 raise ValueError(
                     f"tif_path {tif_path} has {t} frames which still doesn't divide evenly into volumes ({t%params['n_ch_tif']} frames left over)."
-                    "This may be caused by using preregister_tifs() in safe_mode=False which is fast but error prone."  
+                    "This may be caused by using preregister_tifs() in safe_mode=False which is fast but error prone."
                     "Please set tif_preregistration_safe_mode=True in your params and try again."
                     "If that still doesn't work, then either the files have changed or there is inconcsistency in the tif structure!"
                 )
 
             # Reshape the movie to have dimensions (planes, frames, y-pixels, x-pixels)
-            tif_file = n.swapaxes(tif_file.reshape(volumes, params["n_ch_tif"], py, px), 0, 1)
+            tif_file = n.swapaxes(
+                tif_file.reshape(volumes, params["n_ch_tif"], py, px), 0, 1
+            )
 
             # Filter out planes to analyze
             if params["planes"] is not None:
@@ -237,8 +284,10 @@ class s3dio:
 
         # Return mov_list of the current batch
         return mov_list
-    
-    def _load_faced_tifs(self, paths, params, verbose=True, debug=False, structural=False):
+
+    def _load_faced_tifs(
+        self, paths, params, verbose=True, debug=False, structural=False
+    ):
         if structural:
             print("Structural detection not implemented for FACED data!")
             return None
@@ -253,7 +302,9 @@ class s3dio:
             mov_list.append(mov)
         return mov_list
 
-    def _load_lbm_tifs(self, paths, params, verbose=True, debug=False, structural=False):
+    def _load_lbm_tifs(
+        self, paths, params, verbose=True, debug=False, structural=False
+    ):
         """
         Load tifs that are in the standard lbm imaging format.
 
