@@ -718,6 +718,39 @@ class Suite3DVisualiser:
         
         print(f"Report saved to {output_file}")
 
+    def visualise_cluster_arrays_side_by_side(self, arr1: np.ndarray, arr2: np.ndarray, figsize: Tuple[int, int] = (10, 2), save_path: Optional[str] = None):
+        """
+        Visualise two arrays of shape (N, 3, 5, 20, 20) side by side.
+        Each row is a cluster, columns are arr1 and arr2.
+        Args:
+            arr1: np.ndarray of shape (N, 3, 5, 20, 20)
+            arr2: np.ndarray of shape (N, 3, 5, 20, 20)
+            figsize: Figure size per row (default: (10, 2))
+            save_path: Optional path to save figure
+        """
+        assert arr1.shape == arr2.shape, "Arrays must have the same shape."
+        assert arr1.ndim == 5 and arr1.shape[1] == 3, "Arrays must be of shape (N, 3, 5, 20, 20)."
+        N = arr1.shape[0]
+        row_labels = ['Mean', 'Median']
+        col_labels = ['Noise'] + [f'Cluster {i}' for i in range(1, N)]
+        # Make each subplot smaller and tighten layout
+        fig, axes = plt.subplots(2, N, figsize=(1.8*N, 2.8), squeeze=False)
+        arrays = [arr1, arr2]
+        for row in range(2):
+            for col in range(N):
+                img = np.max(arrays[row][col, 0], axis=0)
+                axes[row, col].imshow(img, cmap='gray')
+                axes[row, col].axis('off')
+                if row == 0:
+                    axes[row, col].set_title(col_labels[col], fontsize=8)
+                if col == 0:
+                    axes[row, col].set_ylabel(row_labels[row], fontsize=10, fontweight='bold')
+        plt.subplots_adjust(wspace=0.01, hspace=0.05, left=0.03, right=0.99, top=0.90, bottom=0.10)
+        plt.suptitle('Cluster Representatives: Mean (top) and Median (bottom)', fontsize=12, y=0.97)
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"Cluster arrays side-by-side visualization saved to {save_path}")
+        plt.show()
 
 def main():
     """Command line interface for dataset visualisation."""
@@ -732,8 +765,12 @@ def main():
     # viz.visualise_random_samples(n_samples=20)
 
     # NEW: Visualize cluster examples
-    cluster_labels_file = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\umap_cluster_labels.npy"
-    viz.visualise_cluster_examples(cluster_labels_file, n_examples=5)
+    # cluster_labels_file = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\umap_cluster_labels.npy"
+    # viz.visualise_cluster_examples(cluster_labels_file, n_examples=5)
+    # Visualise cluster mean and median
+    cluster_reps = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\cluster_representatives.npy", allow_pickle=True).item()
+    arr1, arr2 = np.array(cluster_reps['mean']), np.array(cluster_reps['median'])
+    viz.visualise_cluster_arrays_side_by_side(arr1, arr2)
 
     # # Find and inspect bright cells
     # bright_cells = viz.find_interesting_cells('bright', n_cells=10)

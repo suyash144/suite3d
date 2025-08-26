@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA
 from sklearn.cluster import HDBSCAN
 from umap import UMAP
+import json
 
 
 def _iter_batches_permod(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -41,7 +42,7 @@ def run_permod_pca_umap(
     scatter_png: str = "umap_2d.png",
 ) -> str:
     """
-    Per‑modality IncrementalPCA, concatenate embeddings, then UMAP to 2D.
+    Per-modality IncrementalPCA, concatenate embeddings, then UMAP to 2D.
     """
     assert X.ndim == 5 and X.shape[1:] == (3, 5, 20, 20), "X must have shape (N,3,5,20,20)"
     os.makedirs(out_dir, exist_ok=True)
@@ -125,13 +126,13 @@ def run_permod_pca_umap(
     
     # Save results
     np.save(os.path.join(out_dir, "umap_2d.npy"), Y.astype(np.float32))
-    _save_scatter(os.path.join(out_dir, scatter_png), Y)
+    save_scatter(os.path.join(out_dir, scatter_png), Y)
     
     print(f"Pipeline complete. Results saved to: {out_dir}")
     return out_dir
 
 
-def _save_scatter(p: str, Y: np.ndarray):
+def save_scatter(p: str, Y: np.ndarray):
     """Save a simple scatter plot of UMAP results."""
     plt.figure(figsize=(7, 6), dpi=120)
     
@@ -150,6 +151,9 @@ def _save_scatter(p: str, Y: np.ndarray):
     # Color by cluster labels
     if os.path.exists(os.path.join(os.path.dirname(p), "umap_cluster_labels.npy")):
         cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels.npy"))
+        # if clustering within cluster 7
+        # Y = Y[cluster_labels == 7]
+        # cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels_within7.npy"))
         colours = cluster_labels
         show_colorbar = True
 
@@ -172,11 +176,49 @@ def _save_scatter(p: str, Y: np.ndarray):
 def clustering(OUT_DIR):
 
     Y = np.load(os.path.join(OUT_DIR, "umap_2d.npy"))
+    # original_labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels.npy"))
+    # Y = Y[original_labels == 7]
     # Perform clustering on Y
     clusterer = HDBSCAN(min_cluster_size=50)
     cluster_labels = clusterer.fit_predict(Y)
     # Save cluster labels
     np.save(os.path.join(OUT_DIR, "umap_cluster_labels.npy"), cluster_labels)
+
+
+def cluster_representatives(umap_2d, labels, full_features, save_path=None, save_format='json'):
+    """
+    For each cluster, compute:
+    - mean: mean of full_features for cluster
+    - median: real datapoint closest to cluster centroid in UMAP space
+    Returns a dict with keys 'mean' and 'median', each a list of arrays (len=n_clusters).
+    Optionally saves the result to file (json or npy).
+    """
+    import numpy as np
+    unique_labels = np.unique(labels)
+    means = []
+    medians = []
+    for cl in unique_labels:
+        idx = np.where(labels == cl)[0]
+        umap_cluster = umap_2d[idx]
+        features_cluster = full_features[idx]
+        # Mean: mean of full_features in cluster
+        mean_feat = features_cluster.mean(axis=0)
+        means.append(mean_feat.tolist())
+        # Median: find point closest to centroid in UMAP space
+        centroid = umap_cluster.mean(axis=0)
+        dists = np.linalg.norm(umap_cluster - centroid, axis=1)
+        median_idx = idx[np.argmin(dists)]
+        median_feat = full_features[median_idx]
+        medians.append(median_feat.tolist())
+    result = {'mean': means, 'median': medians}
+    if save_path:
+        if save_format == 'json':
+            with open(save_path, 'w') as f:
+                json.dump(result, f)
+        elif save_format == 'npy':
+            np.save(save_path, result)
+    return result
+
 
 
 if __name__ == "__main__":
@@ -200,6 +242,9 @@ if __name__ == "__main__":
     # )
 
     Y = np.load(os.path.join(OUT_DIR, "umap_2d.npy"))
-    _save_scatter(os.path.join(OUT_DIR, "umap_2d.png"), Y.astype(np.float32))
+    labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels.npy"))
+    full_features = np.load(INPUT_PATH)
+    cluster_reps = cluster_representatives(Y, labels, full_features, save_path=os.path.join(OUT_DIR, "cluster_representatives.npy"), save_format='npy')
+    # save_scatter(os.path.join(OUT_DIR, "umap_2d_within7.png"), Y.astype(np.float32))
 
     # clustering(OUT_DIR)
