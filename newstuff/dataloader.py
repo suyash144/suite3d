@@ -92,7 +92,7 @@ class Suite3DProcessor:
             warnings.warn("None of 'corrmap', 'vmap_raw' or 'vmap' found in info dictionary")
             return None
     
-    def extract_cell_patch(self, volume: np.ndarray, center_coord: Tuple[int, int, int]) -> np.ndarray:
+    def extract_cell_patch(self, volume: np.ndarray, center_coord: Tuple[int, int, int]) -> Tuple[np.ndarray, bool]:
         """
         Extract a patch around a cell center from a 3D volume.
         
@@ -101,47 +101,71 @@ class Suite3DProcessor:
             center_coord: (z, y, x) center coordinates
             
         Returns:
-            Extracted patch of size (nbz, nby, nbx)
+            Tuple of (extracted patch of size (nbz, nby, nbx), is_edge_cell flag)
         """
         nz, ny, nx = volume.shape
         cz, cy, cx = center_coord
         
-        # Calculate patch boundaries
-        z_start = max(0, cz - self.nbz // 2)
-        z_end = min(nz, z_start + self.nbz)
-        z_start = max(0, z_end - self.nbz)  # Adjust if we're at edge
+        # Calculate desired patch boundaries (centered on the cell)
+        z_start = cz - self.nbz // 2
+        z_end = z_start + self.nbz
         
-        y_start = max(0, cy - self.nby // 2)
-        y_end = min(ny, y_start + self.nby)
-        y_start = max(0, y_end - self.nby)
+        y_start = cy - self.nby // 2
+        y_end = y_start + self.nby
         
-        x_start = max(0, cx - self.nbx // 2)
-        x_end = min(nx, x_start + self.nbx)
-        x_start = max(0, x_end - self.nbx)
+        x_start = cx - self.nbx // 2
+        x_end = x_start + self.nbx
         
-        # Extract patch
-        patch = volume[z_start:z_end, y_start:y_end, x_start:x_end]
+        # Clip boundaries to volume limits (don't adjust to maintain size)
+        z_start_clipped = max(0, z_start)
+        z_end_clipped = min(nz, z_end)
         
-        # Handle edge cases - pad if necessary
-        if patch.shape != (self.nbz, self.nby, self.nbx):
+        y_start_clipped = max(0, y_start)
+        y_end_clipped = min(ny, y_end)
+        
+        x_start_clipped = max(0, x_start)
+        x_end_clipped = min(nx, x_end)
+        
+        # Extract the available patch
+        patch = volume[z_start_clipped:z_end_clipped, 
+                    y_start_clipped:y_end_clipped, 
+                    x_start_clipped:x_end_clipped]
+        
+        # Check if we have the full desired patch size
+        is_edge_cell = (patch.shape[0] != self.nbz or 
+                    patch.shape[1] != self.nby or 
+                    patch.shape[2] != self.nbx)
+        
+        # If it's an edge case, pad to the desired size
+        if is_edge_cell:
             padded_patch = np.zeros((self.nbz, self.nby, self.nbx), dtype=patch.dtype)
             
-            # Calculate padding
-            pad_z = (self.nbz - patch.shape[0]) // 2
-            pad_y = (self.nby - patch.shape[1]) // 2
-            pad_x = (self.nbx - patch.shape[2]) // 2
+            # Calculate where to place the extracted patch within the padded array
+            # to maintain the original centering as much as possible
             
-            padded_patch[
-                pad_z:pad_z + patch.shape[0],
-                pad_y:pad_y + patch.shape[1],
-                pad_x:pad_x + patch.shape[2]
-            ] = patch
+            # For each dimension, calculate the offset from the desired start
+            z_offset = max(0, -z_start)  # How much we're offset from desired start
+            y_offset = max(0, -y_start)
+            x_offset = max(0, -x_start)
             
-            return padded_patch
+            # If we hit the end boundary, we need to shift the placement
+            if z_end > nz:
+                z_offset = self.nbz - patch.shape[0]
+            if y_end > ny:
+                y_offset = self.nby - patch.shape[1] 
+            if x_end > nx:
+                x_offset = self.nbx - patch.shape[2]
+                
+            # Place the patch in the padded array
+            padded_patch[z_offset:z_offset + patch.shape[0],
+                        y_offset:y_offset + patch.shape[1],
+                        x_offset:x_offset + patch.shape[2]] = patch
+            
+            return padded_patch, is_edge_cell
         
-        return patch
-    
-    def create_cell_footprint(self, coords: List[np.ndarray], lam: np.ndarray, 
+        return patch, is_edge_cell
+
+    def create_cell_footprint(self, coords: List[np.ndarray], lam: np.ndarray,
                              med_coord: Tuple[int, int, int]) -> np.ndarray:
         """
         Create cell footprint matrix from coordinates and weights relative to med.
@@ -249,45 +273,50 @@ class Suite3DProcessor:
                 corrmap = mean_img.copy()
                 print("Using mean_img as second channel (corrmap/vmap not found)")
         
-        # Filter for actual cells
-        cell_indices = np.where(iscell[:, 0] == 1)[0]
-        n_cells = len(cell_indices)
+        # We actually don't want to filter ROIs as that is the whole point of curation
+        # # Filter for actual cells
+        # cell_indices = np.where(iscell[:, 0] == 1)[0]
+        # n_cells = len(cell_indices)
         
-        print(f"Found {n_cells} cells out of {len(stats)} ROIs")
+        # print(f"Found {n_cells} cells out of {len(stats)} ROIs")
         
-        if n_cells == 0:
-            print("Warning: No cells found in this session, skipping")
-            return None
+        # if n_cells == 0:
+        #     print("Warning: No cells found in this session, skipping")
+        #     return None
+
+        n_cells = len(stats)
+        edge_cells = np.zeros(n_cells, dtype=bool)
         
         # Initialize output array
         cell_patches = np.zeros((n_cells, self.nchannel, self.nbz, self.nby, self.nbx), 
                                dtype=np.float32)
         
         # Extract patches for each cell
-        for i, cell_idx in enumerate(cell_indices):
-            cell_stat = stats[cell_idx]
+        for i, cell_stat in enumerate(stats):
             
             # Get cell center coordinates (med field)
             if 'med' not in cell_stat:
-                warnings.warn(f"Cell {cell_idx} missing 'med' field, skipping")
+                warnings.warn(f"Cell {i} missing 'med' field, skipping")
                 continue
                 
             med_coord = cell_stat['med']  # Should be (z, y, x)
             
             # Extract patches from channels
-            mean_patch = self.extract_cell_patch(mean_img, med_coord)
-            corr_patch = self.extract_cell_patch(corrmap, med_coord)
+            mean_patch, is_edge_mean = self.extract_cell_patch(mean_img, med_coord)
+            corr_patch, is_edge_corr = self.extract_cell_patch(corrmap, med_coord)
             if 'coords' in cell_stat and 'lam' in cell_stat:
                 coords = cell_stat['coords']
                 lam = cell_stat['lam']
                 footprint_patch = self.create_cell_footprint(coords, lam, med_coord)
             else:
-                warnings.warn(f"Cell {cell_idx} missing 'coords' or 'lam' field, using zero footprint")
+                warnings.warn(f"Cell {i} missing 'coords' or 'lam' field, using zero footprint")
                 footprint_patch = np.zeros((self.nbz, self.nby, self.nbx), dtype=np.float32)
             
             cell_patches[i, 0] = mean_patch
             cell_patches[i, 1] = corr_patch
             cell_patches[i, 2] = footprint_patch
+
+            edge_cells[i] = is_edge_mean or is_edge_corr
         
         # Prepare session info
         session_info = {
@@ -296,20 +325,22 @@ class Suite3DProcessor:
             'n_rois_total': len(stats),
             'image_shape': mean_img.shape,
             'patch_shape': (self.nbz, self.nby, self.nbx),
-            'cell_indices': cell_indices.tolist(),
             'has_corrmap': 'corrmap' in info,
             'has_vmap': 'vmap_raw' in info
         }
         
         # Save immediately to free memory
         session_name = session_path.name
+        edge_file = session_path / "edge_cells.npy"
+        np.save(edge_file, edge_cells)
+
         patches_file = self.output_dir / f"{session_name}_patches.npy"
         info_file = self.output_dir / f"{session_name}_info.npy"
         
         print(f"Saving patches to {patches_file}")
         np.save(patches_file, cell_patches)
         np.save(info_file, session_info)
-        
+
         # Force garbage collection to free memory
         del cell_patches, mean_img, corrmap, session_data
         gc.collect()
@@ -464,11 +495,6 @@ class Suite3DProcessor:
         print(f"Sessions processed: {len(session_info_list)}")
         print(f"Total cells extracted: {total_cells}")
         print(f"Output directory: {self.output_dir}")
-        print(f"Files saved:")
-        for session_info in session_info_list:
-            session_name = session_info['session_name']
-            print(f"  - {session_name}_patches.npy ({session_info['n_cells']} cells)")
-            print(f"  - {session_name}_info.npy")
         if create_combined and total_cells > 0:
             print(f"  - all_sessions_patches.npy ({total_cells} cells)")
             print(f"  - all_sessions_info.npy")
@@ -500,11 +526,12 @@ if __name__ == "__main__":
     main()
 
 
-    all_sessions_patches = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
+    # all_sessions_patches = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
 
-    print(all_sessions_patches.shape)
+    # print(all_sessions_patches.shape)
 
-    all_sessions_info = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_info.npy", allow_pickle=True).item()
-    print(all_sessions_info['total_cells'])
+    # all_sessions_info = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_info.npy", allow_pickle=True).item()
+    # print(all_sessions_info['total_cells'])
     # print(all_sessions_info['n_sessions'])
+    # print(all_sessions_info['session_cell_counts'])
     
