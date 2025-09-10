@@ -193,22 +193,22 @@ def save_scatter(p: str, Y: np.ndarray, labels=None):
     #         colours = np.concatenate([np.ones(c) * i for i, c in enumerate(cell_counts)])
 
     # Color by cluster labels
-    # if os.path.exists(os.path.join(os.path.dirname(p), "umap_cluster_labels.npy")):
-    #     cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels_within7.npy"))
-    #     # if clustering within cluster 7
-    #     # Y = Y[cluster_labels == 7]
-    #     # cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels_within7.npy"))
-    #     colours = cluster_labels
-    #     show_colorbar = True
+    if os.path.exists(os.path.join(os.path.dirname(p), "umap_cluster_labels.npy")):
+        cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels_within7.npy"))
+        # if clustering within cluster 7
+        # Y = Y[cluster_labels == 7]
+        # cluster_labels = np.load(os.path.join(os.path.dirname(p), "umap_cluster_labels_within7.npy"))
+        colours = cluster_labels
+        show_colorbar = True
 
     scatter = plt.scatter(Y[:, 0], Y[:, 1], s=0.1, alpha=0.1, c=labels, cmap='viridis')
-    plt.legend(*scatter.legend_elements(num=2), title="Edge Cell", loc="best", markerscale=0.1, fontsize='small')
+    # plt.legend(*scatter.legend_elements(num=9), title="Session", loc="best", markerscale=1, fontsize='small')
 
     # Add colorbar for cluster labels
-    # if show_colorbar and labels is not None:
-    #     unique_labels = np.unique(labels)
-    #     n_clusters = len(unique_labels[unique_labels >= 0])  # Exclude noise points (-1)
-    #     plt.colorbar(scatter, label=f'Cluster ID ({n_clusters} clusters)', shrink=0.8)
+    if show_colorbar or labels is not None:
+        unique_labels = np.unique(labels)
+        n_clusters = len(unique_labels[unique_labels >= 0])  # Exclude noise points (-1)
+        plt.colorbar(scatter, label=f'Cluster ID ({n_clusters} clusters)', shrink=0.8, alpha=1)
     
     plt.xlabel("UMAP-1")
     plt.ylabel("UMAP-2")
@@ -221,14 +221,15 @@ def save_scatter(p: str, Y: np.ndarray, labels=None):
 
 def clustering(OUT_DIR):
 
-    Y = np.load(os.path.join(OUT_DIR, "umap_2d_within7_fresh.npy"))
+    Y = np.load(os.path.join(OUT_DIR, "umap_2d_spatfilt.npy"))
+    print(f"UMAP shape: {Y.shape}")
     # original_labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels.npy"))
     # Y = Y[original_labels == 7]
     # Perform clustering on Y
-    clusterer = HDBSCAN(min_cluster_size=50)
+    clusterer = HDBSCAN(min_cluster_size=500)
     cluster_labels = clusterer.fit_predict(Y)
     # Save cluster labels
-    np.save(os.path.join(OUT_DIR, "umap_cluster_labels_within7.npy"), cluster_labels)
+    np.save(os.path.join(OUT_DIR, "umap_cluster_labels_spatfilt.npy"), cluster_labels)
 
 
 def cluster_representatives(umap_2d, labels, full_features, save_path=None, save_format='json'):
@@ -272,29 +273,31 @@ if __name__ == "__main__":
     OUT_DIR = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output"
 
     # with h5py.File(INPUT_PATH, 'r') as hf:
-    #     X = hf["data"][:]
+    #     ec = hf["edge_cells"][:]
+    #     X = hf["data"][ec==False, :, :, :, :]  # only non-edge cells
     # labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels.npy"))
     # X = X[labels == 7]  # only taking the main cluster
     # print(f"Data shape: {X.shape}")
 
 
-    X = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
+    # X = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
     
-    run_permod_pca_umap(
-        X=X,
-        ncomp_per_mod=32,
-        batch_size=4096,
-        out_dir=OUT_DIR,
-        whiten=True,
-        seed=None,
-        umap_neighbors=30,
-        umap_min_dist=0.1,
-        savename="umap_2d",
-    )
+    # run_permod_pca_umap(
+    #     X=X,
+    #     ncomp_per_mod=32,
+    #     batch_size=4096,
+    #     out_dir=OUT_DIR,
+    #     whiten=True,
+    #     seed=None,
+    #     umap_neighbors=30,
+    #     umap_min_dist=0.1,
+    #     savename="umap_2d",
+    # )
 
-    # Y = np.load(os.path.join(OUT_DIR, "umap_2d.npy"))
+    Y = np.load(os.path.join(OUT_DIR, "umap_2d_spatfilt.npy"))
     # full_features = X
-    # cluster_reps = cluster_representatives(Y, labels, full_features, save_path=os.path.join(OUT_DIR, "cluster_representatives.npy"), save_format='npy')
-    # save_scatter(os.path.join(OUT_DIR, "umap_2d.png"), Y.astype(np.float32))
+    labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels_spatfilt.npy"))
+    # cluster_reps = cluster_representatives(Y, labels, full_features, save_path=os.path.join(OUT_DIR, "cluster_reps_spatfilt.npy"), save_format='npy')
+    save_scatter(os.path.join(OUT_DIR, "umap_2d_spatfilt_clusters.png"), Y.astype(np.float32), labels=labels)
 
     # clustering(OUT_DIR)

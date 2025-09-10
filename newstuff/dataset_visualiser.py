@@ -768,7 +768,7 @@ def main():
     # cluster_labels_file = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\umap_cluster_labels.npy"
     # viz.visualise_cluster_examples(cluster_labels_file, n_examples=5)
     # Visualise cluster mean and median
-    cluster_reps = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\cluster_representatives.npy", allow_pickle=True).item()
+    cluster_reps = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\cluster_reps_spatfilt.npy", allow_pickle=True).item()
     arr1, arr2 = np.array(cluster_reps['mean']), np.array(cluster_reps['median'])
     viz.visualise_cluster_arrays_side_by_side(arr1, arr2)
 
