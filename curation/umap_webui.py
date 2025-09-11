@@ -18,7 +18,7 @@ class UMAPVisualizer:
         self.umap_embedding = None
         self.source = None
         self.plot = None
-        self.n_clusters = 10
+        self.n_clusters = 20
         self.umap_file_path = umap_file_path
         self.classifications_file = None
         self.cluster_colors = None
@@ -31,7 +31,7 @@ class UMAPVisualizer:
         self.cluster_slider = pn.widgets.IntSlider(
             name='Number of Clusters', 
             start=10, end=100, value=20, 
-            width=220
+            width=200
         )
         
         # Add sampling controls
@@ -96,7 +96,7 @@ class UMAPVisualizer:
         )
         
         # Status text
-        self.status_text = pn.pane.Markdown(f"**Status:** Loading {umap_file_path}...", width=400)
+        self.status_text = pn.pane.Markdown(f"**Status:** Loading {umap_file_path}...", width=200)
         
         # NEW: Track last clicked cluster
         self.last_clicked_cluster = None
@@ -546,9 +546,9 @@ class UMAPVisualizer:
             not_cell_count = sum(1 for c in self.full_data['classification'] if c == 'not_cell')
             
             if self.use_sampling:
-                stats_display.object = f"**Total:** {total_points:,} points | **Displaying:** {display_points:,} (sampled) | **Cells:** {cell_count:,} | **Not cells:** {not_cell_count:,}"
+                stats_display.object = f"**Total:** {total_points:,} points | **Displaying:** {display_points:,} (sampled)"
             else:
-                stats_display.object = f"**{total_points:,} points** | **Cells:** {cell_count:,} | **Not cells:** {not_cell_count:,}"
+                stats_display.object = f"**{total_points:,} points**"
         
         plot_column = pn.Column(
             plot_title,
@@ -567,7 +567,7 @@ class UMAPVisualizer:
             self.cluster_slider,
             pn.Spacer(height=10),
             self.cluster_button,
-            pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=300),
+            pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=200),
             pn.Spacer(height=20),
             # "## Point Classification (Lasso/Box Select)", 
             # self.classify_cell_button,
@@ -585,7 +585,7 @@ class UMAPVisualizer:
             self.save_button,
             pn.Spacer(height=20),
             self.status_text,
-            width=420,
+            width=250,
             margin=(10, 10)
         )
         
