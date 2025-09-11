@@ -266,14 +266,15 @@ class UMAPVisualizer:
         
         # Set colors
         colors[cell_mask] = 'black'
-        colors[not_cell_mask] = 'white'
+        colors[not_cell_mask] = 'gray'
         
         # For unclassified, use cluster colors
         for i in np.where(unclassified_mask)[0]:
             colors[i] = self.cluster_colors[clusters[i] % len(self.cluster_colors)]
         
         # Set alphas
-        alphas[cell_mask | not_cell_mask] = 0.8
+        alphas[cell_mask] = 0.8
+        alphas[not_cell_mask] = 0.05
         
         return colors.tolist(), alphas.tolist()
     
