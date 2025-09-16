@@ -7,13 +7,15 @@ from sklearn.cluster import KMeans
 import json
 from pathlib import Path
 from umap_visualiser import UMAPVisualiser
+from box_viewer import BoxViewer
 
 pn.extension()
 
 
 class AppOrchestrator:
-    def __init__(self, umap_file_path="umap_embeddings.npy"):
+    def __init__(self, umap_file_path="umap_embeddings.npy", hdf5_path="data.h5"):
         self.umap_file_path = umap_file_path
+        self.hdf5_path = hdf5_path
         self.classifications_file = None
         self.sample_size = 50000
         self.use_sampling = True
@@ -27,7 +29,8 @@ class AppOrchestrator:
         
         # Components
         self.umap_visualiser = None
-        self.original_data_viewer = None  # To be implemented later
+        self.box_viewer = None
+        self.hist_viewer = None
         
         # Shared widgets
         self.cluster_slider = pn.widgets.IntSlider(
@@ -169,6 +172,9 @@ class AppOrchestrator:
             self.umap_visualiser = UMAPVisualiser(self.display_data)
             # Subscribe to selection events
             self.umap_visualiser.on_cluster_selected = self.on_cluster_selected
+
+            # add box viewer
+            self.box_viewer = BoxViewer(self.hdf5_path, self.sample_indices, self.use_sampling)
     
     def on_cluster_selected(self, cluster_id):
         """Handle cluster selection from UMAP visualiser"""
@@ -177,6 +183,10 @@ class AppOrchestrator:
         cluster_size = len(self.full_data[self.full_data['cluster'] == cluster_id])
         self.status_text.object = f"**Status:** Selected cluster {cluster_id} ({cluster_size:,} points) - use cluster classification buttons"
         self.selected_cluster = cluster_id
+
+        # Load cluster data in BoxViewer
+        if self.box_viewer:
+            self.box_viewer.load_cluster_data(cluster_id, self.display_data)
     
     def update_clusters(self, event=None):
         """Update clustering"""
@@ -199,6 +209,10 @@ class AppOrchestrator:
             # Update UMAP visualiser
             if self.umap_visualiser:
                 self.umap_visualiser.update_data(self.display_data)
+
+            # Update BoxViewer
+            if self.box_viewer:
+                self.box_viewer.clear_cache()
             
             self.status_text.object = f"**Status:** Updated to {n_clusters} clusters"
             
@@ -299,8 +313,6 @@ class AppOrchestrator:
         if self.full_data is not None:
             total_points = len(self.full_data)
             display_points = len(self.display_data) if self.display_data is not None else 0
-            cell_count = sum(1 for c in self.full_data['classification'] if c == 'cell')
-            not_cell_count = sum(1 for c in self.full_data['classification'] if c == 'not_cell')
             
             if self.use_sampling:
                 stats_display.object = f"**Total:** {total_points:,} points | **Displaying:** {display_points:,} (sampled)"
@@ -335,20 +347,22 @@ class AppOrchestrator:
             margin=(10, 10)
         )
         
+        layout_components = [pn.Spacer(width=20), plot_column, pn.Spacer(width=20), controls]
+        if self.box_viewer:
+            layout_components.extend([pn.Spacer(width=20), self.box_viewer.get_layout()])
+
         return pn.Row(
-            plot_column,
-            pn.Spacer(width=20),
-            controls,
+            *layout_components,
             sizing_mode='stretch_width'
         )
 
 
-def create_app(umap_file="umap_2d.npy"):
+def create_app(umap_file="umap_2d.npy", hdf5_path="data.h5"):
     """Create the application with orchestrator"""
-    orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file))
+    orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file), hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app("umap_2d.npy")
+app = create_app("umap_2d.npy", r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 app.servable()
 
 if __name__ == "__main__":
