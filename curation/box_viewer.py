@@ -35,13 +35,15 @@ class BoxViewer:
         self.z_slice_slider = pn.widgets.IntSlider(
             name="XY View (Z slice)",
             start=0, end=4, value=2,
-            width=200
+            width=160,
+            disabled=True  # Start disabled
         )
         
         self.y_slice_slider = pn.widgets.IntSlider(
             name="XZ View (Y slice)", 
             start=0, end=19, value=10,
-            width=200
+            width=160,
+            disabled=True  # Start disabled
         )
         
         # Status text
@@ -54,8 +56,8 @@ class BoxViewer:
         # Set up callbacks
         self.view_selector.param.watch(self._on_view_change, 'value')
         self.projection_selector.param.watch(self._on_projection_change, 'value')
-        self.z_slice_slider.param.watch(self._on_slice_change, 'value')
-        self.y_slice_slider.param.watch(self._on_slice_change, 'value')
+        self.z_slice_slider.param.watch(self._on_z_slice_change, 'value')
+        self.y_slice_slider.param.watch(self._on_y_slice_change, 'value')
         
         # Try to open HDF5 file
         self._open_hdf5()
@@ -195,14 +197,23 @@ class BoxViewer:
     
     def _on_projection_change(self, event):
         """Handle projection mode changes"""
+        # Update slider enabled/disabled state
+        use_slices = (event.new == "Select Slice")
+        self.z_slice_slider.disabled = not use_slices
+        self.y_slice_slider.disabled = not use_slices
         self._update_plots()
     
-    def _on_slice_change(self, event):
-        """Handle slice slider changes"""
+    def _on_z_slice_change(self, event):
+        """Handle Z slice slider changes"""
         if self.projection_selector.value == "Select Slice":
-            self._update_plots()
+            self._update_plots(which="top")
+
+    def _on_y_slice_change(self, event):
+        """Handle Y slice slider changes"""
+        if self.projection_selector.value == "Select Slice":
+            self._update_plots(which="bottom")
     
-    def _update_plots(self):
+    def _update_plots(self, which="all"):
         """Update all 6 plots based on current sample and settings"""
         if self.current_sample is None:
             return
@@ -223,8 +234,13 @@ class BoxViewer:
                 xz_data = channel_volume[:, y_slice, :]  # (5, 20) - Z, X
             
             # Update plots with proper aspect ratios
-            self._update_single_plot(self.xy_plots[channel], xy_data, (20, 20), channel=channel)
-            self._update_single_plot(self.xz_plots[channel], xz_data, (20, 5), channel=channel)
+            if which == "all":
+                self._update_single_plot(self.xy_plots[channel], xy_data, (20, 20), channel=channel)
+                self._update_single_plot(self.xz_plots[channel], xz_data, (20, 5), channel=channel)
+            elif which == "top":
+                self._update_single_plot(self.xy_plots[channel], xy_data, (20, 20), channel=channel)
+            elif which == "bottom":
+                self._update_single_plot(self.xz_plots[channel], xz_data, (20, 5), channel=channel)
     
     def _update_single_plot(self, plot, data, expected_shape, channel):
         """Update a single bokeh plot with 2D data"""
@@ -267,38 +283,19 @@ class BoxViewer:
     
     def get_layout(self):
         """Return the complete BoxViewer layout"""
-        # Create slice controls that are only visible when needed
-        slice_controls = pn.Column(
-            pn.pane.Markdown("**Slice Selection:**"),
-            self.z_slice_slider,
-            self.y_slice_slider,
-            visible=False  # Will be controlled by projection selector
-        )
-        
-        # Update visibility based on projection mode
-        def update_slice_visibility(projection_mode):
-            slice_controls.visible = (projection_mode == "Select Slice")
-        
-        # Watch for projection mode changes to update visibility
-        self.projection_selector.param.watch(
-            lambda event: update_slice_visibility(event.new), 'value'
-        )
-        
-        # Controls column
-        controls = pn.Column(
+        # Main controls (without sliders)
+        main_controls = pn.Column(
             "### Sample Viewer",
             self.view_selector,
             pn.Spacer(height=10),
             self.projection_selector,
-            pn.Spacer(height=10),
-            slice_controls,
             pn.Spacer(height=20),
             self.status_text,
             width=240,
             margin=(10, 10)
         )
         
-        # Create plot grid: 3 columns (channels) × 2 rows (XY on top, XZ below)
+        # Create channel columns for plots
         channel_columns = []
         for channel in range(3):
             if channel == 0:
@@ -307,6 +304,7 @@ class BoxViewer:
                 name = "Correlation Map"
             else:
                 name = "Footprint"
+            
             channel_header = pn.pane.Markdown(f"**{name}**", 
                                         margin=(5, 0, 0, 0), 
                                         align='center')
@@ -318,12 +316,39 @@ class BoxViewer:
             )
             channel_columns.append(channel_col)
         
-        plots_grid = pn.Row(*channel_columns, margin=(10, 0))
+        # Create slider controls positioned next to the rows they control
+        z_slider_control = pn.Column(
+            pn.Spacer(height=75),  # Align with XY plots (accounting for header)
+            self.z_slice_slider,
+            pn.Spacer(height=70),  # Space to align with XZ row
+            margin=(5, 10),
+            width=180
+        )
+        
+        y_slider_control = pn.Column(
+            self.y_slice_slider,
+            margin=(5, 10),
+            width=180
+        )
+        
+        # Combine sliders into one column
+        slider_controls = pn.Column(
+            z_slider_control,
+            y_slider_control,
+            width=180
+        )
+        
+        # Create the plots section: 3 channel columns + slider controls
+        plots_section = pn.Row(
+            *channel_columns,
+            slider_controls,
+            margin=(10, 0)
+        )
         
         return pn.Column(
-            controls,
-            plots_grid,
-            width=800
+            main_controls,
+            plots_section,
+            width=900
         )
     
     def __del__(self):
@@ -335,4 +360,3 @@ class BoxViewer:
                 pass
 
 
-            
