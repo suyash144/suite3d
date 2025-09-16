@@ -2,7 +2,7 @@ import numpy as np
 import panel as pn
 import h5py
 from bokeh.plotting import figure
-from bokeh.palettes import Reds8, Blues8, Greens8
+from bokeh.palettes import Greys256, Blues8
 
 class BoxViewer:
     """Component for viewing 5D data samples with 3 channels and dual view projections"""
@@ -247,7 +247,7 @@ class BoxViewer:
         # Clear existing renderers
         plot.renderers = []
 
-        palettes = [Reds8, Blues8, Greens8]
+        palettes = [Greys256, Greys256, Blues8[::-1]]
         
         # Update plot ranges to match data
         plot.x_range.end = expected_shape[0] 
