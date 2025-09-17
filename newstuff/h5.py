@@ -12,7 +12,6 @@ root = r'\\znas.cortexlab.net\Lab\Share\Ali\for-suyash'
 shot_noise, edge_cells = [], []
 
 for session in os.listdir(root):
-    if session == "s3d-results-SS004_2024-07-30_1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23": continue
     session_path = os.path.join(root, session)
     if not os.path.exists(os.path.join(session_path, "shot_noise.npy")):
         continue

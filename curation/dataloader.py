@@ -1,8 +1,11 @@
+import h5py
 import numpy as np
 import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
+import os
+
 
 class Suite3DProcessor:
     """
@@ -248,14 +251,13 @@ class Suite3DProcessor:
         session_data = self.load_session_data(session_path)
         
         # Check required data exists
-        required_keys = ['info', 'stats', 'iscell']
+        required_keys = ['info', 'stats']
         for key in required_keys:
             if key not in session_data:
                 raise ValueError(f"Required file {key}.npy not found in {session_path}")
         
         info = session_data['info']
         stats = session_data['stats']
-        iscell = session_data['iscell']
         
         # Get mean image and correlation map
         if 'mean_img' not in info:
@@ -501,10 +503,16 @@ class Suite3DProcessor:
         print("=" * 60)
 
 
-def main():
+def main(data_directory: str = None, output_directory: str = None):
+    """
+    Main entry point for processing Suite3D data.
+    Sessions for processing should each have their own folder in data_directory.
+    Each folder must contain an info.npy file.
 
-    data_directory = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash"
-    output_directory = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output"
+    Args:
+        data_directory: Path to the directory containing folders for each session to be processed
+        output_directory: Path to the directory where processed data will be saved
+    """
 
     processor = Suite3DProcessor(
         data_dir=data_directory,
@@ -521,17 +529,21 @@ def main():
         import traceback
         traceback.print_exc()
 
+    # Now create H5 dataset for curation
+    data = np.load(os.path.join(output_directory, "all_sessions_patches.npy"), allow_pickle=True)
+    h5_path = os.path.join(output_directory, "dataset.h5")
+    with h5py.File(h5_path, 'w') as hf:
+        hf.create_dataset("data",  data=data)
+    
+    # Now the npy file can be safely deleted
+    os.remove(os.path.join(output_directory, "all_sessions_patches.npy"))
+    print(f"H5 dataset created at {h5_path}")
+
+
 
 if __name__ == "__main__":
-    main()
 
+    data_directory = r"\path\to\your\data\directory"
+    output_directory = r"\path\where\you\want\to\save\output"
 
-    # all_sessions_patches = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
-
-    # print(all_sessions_patches.shape)
-
-    # all_sessions_info = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_info.npy", allow_pickle=True).item()
-    # print(all_sessions_info['total_cells'])
-    # print(all_sessions_info['n_sessions'])
-    # print(all_sessions_info['session_cell_counts'])
-    
+    main(data_directory=data_directory, output_directory=output_directory)
