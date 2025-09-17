@@ -1,7 +1,6 @@
 from __future__ import annotations
 import os
 from typing import Iterable, Tuple
-
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
@@ -269,35 +268,23 @@ def cluster_representatives(umap_2d, labels, full_features, save_path=None, save
 
 
 if __name__ == "__main__":
-    INPUT_PATH = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
-    OUT_DIR = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output"
-
-    # with h5py.File(INPUT_PATH, 'r') as hf:
-    #     ec = hf["edge_cells"][:]
-    #     X = hf["data"][ec==False, :, :, :, :]  # only non-edge cells
-    # labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels.npy"))
-    # X = X[labels == 7]  # only taking the main cluster
-    # print(f"Data shape: {X.shape}")
 
 
-    # X = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy")
+    H5_PATH = r"\path\to\your\h5\file.h5"
+    OUT_DIR = r"\where\you\want\to\save\outputs"
+
+    with h5py.File(H5_PATH, 'r') as f:
+        X = f["data"][:]
     
-    # run_permod_pca_umap(
-    #     X=X,
-    #     ncomp_per_mod=32,
-    #     batch_size=4096,
-    #     out_dir=OUT_DIR,
-    #     whiten=True,
-    #     seed=None,
-    #     umap_neighbors=30,
-    #     umap_min_dist=0.1,
-    #     savename="umap_2d",
-    # )
+    run_permod_pca_umap(
+        X=X,
+        ncomp_per_mod=32,
+        batch_size=4096,
+        out_dir=OUT_DIR,
+        whiten=True,
+        seed=None,
+        umap_neighbors=30,
+        umap_min_dist=0.1,
+        savename="umap_2d",
+    )
 
-    Y = np.load(os.path.join(OUT_DIR, "umap_2d_spatfilt.npy"))
-    # full_features = X
-    labels = np.load(os.path.join(OUT_DIR, "umap_cluster_labels_spatfilt.npy"))
-    # cluster_reps = cluster_representatives(Y, labels, full_features, save_path=os.path.join(OUT_DIR, "cluster_reps_spatfilt.npy"), save_format='npy')
-    save_scatter(os.path.join(OUT_DIR, "umap_2d_spatfilt_clusters.png"), Y.astype(np.float32), labels=labels)
-
-    # clustering(OUT_DIR)

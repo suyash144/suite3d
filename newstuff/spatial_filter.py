@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 import os
-from dimensionality_reduction import run_permod_pca_umap, save_scatter
+from curation.dimensionality_reduction import run_permod_pca_umap, save_scatter
 from sklearn.preprocessing import StandardScaler
 
 
