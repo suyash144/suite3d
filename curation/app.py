@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from umap_visualiser import UMAPVisualiser
 from box_viewer import BoxViewer
+from hist_viewer import HistViewer
 
 pn.extension()
 
@@ -175,6 +176,12 @@ class AppOrchestrator:
 
             # add box viewer
             self.box_viewer = BoxViewer(self.hdf5_path, self.sample_indices, self.use_sampling)
+
+            # add hist viewer
+            self.hist_viewer = HistViewer(self.hdf5_path, self.sample_indices, self.use_sampling)
+
+            if self.box_viewer and self.hist_viewer:
+                self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
     
     def on_cluster_selected(self, cluster_id):
         """Handle cluster selection from UMAP visualiser"""
@@ -187,6 +194,10 @@ class AppOrchestrator:
         # Load cluster data in BoxViewer
         if self.box_viewer:
             self.box_viewer.load_cluster_data(cluster_id, self.display_data)
+        
+        # also load in HistViewer
+        if self.hist_viewer:
+            self.hist_viewer.load_cluster_data(cluster_id, self.display_data)
     
     def update_clusters(self, event=None):
         """Update clustering"""
@@ -213,6 +224,10 @@ class AppOrchestrator:
             # Update BoxViewer
             if self.box_viewer:
                 self.box_viewer.clear_cache()
+            
+            # Update HistViewer
+            if self.hist_viewer:
+                self.hist_viewer.clear_cache()
             
             self.status_text.object = f"**Status:** Updated to {n_clusters} clusters"
             
@@ -347,11 +362,24 @@ class AppOrchestrator:
             margin=(10, 10)
         )
         
-        layout_components = [pn.Spacer(width=20), plot_column, pn.Spacer(width=20), controls]
+        top_row_components = [pn.Spacer(width=20), plot_column, pn.Spacer(width=20), controls]
         if self.box_viewer:
-            layout_components.extend([pn.Spacer(width=20), self.box_viewer.get_layout()])
+            top_row_components.extend([pn.Spacer(width=20), self.box_viewer.get_layout()])
 
-        return pn.Row(
+        top_row = pn.Row(
+            *top_row_components,
+            sizing_mode='stretch_width'
+        )
+
+        layout_components = [top_row]
+
+        if self.hist_viewer:
+            layout_components.extend([
+                pn.Spacer(height=20),
+                self.hist_viewer.get_layout()
+            ])
+    
+        return pn.Column(
             *layout_components,
             sizing_mode='stretch_width'
         )

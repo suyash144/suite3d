@@ -62,6 +62,7 @@ class BoxViewer:
         self.projection_selector.param.watch(self._on_projection_change, 'value')
         self.z_slice_slider.param.watch(self._on_z_slice_change, 'value')
         self.y_slice_slider.param.watch(self._on_y_slice_change, 'value')
+        self.on_sample_changed = None
         
         # Try to open HDF5 file
         self._open_hdf5()
@@ -182,6 +183,9 @@ class BoxViewer:
             self._update_current_sample()
             
             self.status_text.object = f"**Status:** Loaded cluster {cluster_id} ({len(cluster_original_indices)} samples)"
+
+            if self.on_sample_changed and self.current_sample is not None:
+                self.on_sample_changed(self.current_sample)
             
         except Exception as e:
             self.status_text.object = f"**Error:** Failed to load cluster data: {str(e)}"
@@ -194,6 +198,9 @@ class BoxViewer:
         view_type = self.view_selector.value.lower()
         self.current_sample = self.cluster_cache[self.current_cluster_id][view_type]
         self._update_plots()
+
+        if self.on_sample_changed:
+            self.on_sample_changed(self.current_sample)
     
     def _on_view_change(self, event):
         """Handle view selector changes"""
