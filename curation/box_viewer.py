@@ -17,6 +17,10 @@ class BoxViewer:
         self.current_cluster_id = None
         self.current_sample = None  # Current (3, 5, 20, 20) array to display
         
+        # Keep track of image renderers to avoid recreation
+        self.xy_image_renderers = [None, None, None]
+        self.xz_image_renderers = [None, None, None]
+        
         # UI Controls
         self.view_selector = pn.widgets.RadioButtonGroup(
             name="View Type",
@@ -244,13 +248,10 @@ class BoxViewer:
     
     def _update_single_plot(self, plot, data, expected_shape, channel):
         """Update a single bokeh plot with 2D data"""
-        # Clear existing renderers
-        plot.renderers = []
-
         palettes = [Greys256, Greys256, Blues8[::-1]]
         
         # Update plot ranges to match data
-        plot.x_range.end = expected_shape[0] 
+        plot.x_range.end = expected_shape[0]
         plot.y_range.end = expected_shape[1]
         
         # Normalize data for display (0-1 range)
@@ -262,13 +263,31 @@ class BoxViewer:
         # Flip data vertically for proper image orientation (bokeh displays images upside down)
         data_flipped = np.flipud(data_norm)
         
-        # Create image plot
-        plot.image(
-            image=[data_flipped], 
-            x=0, y=0, 
-            dw=expected_shape[0], dh=expected_shape[1],
-            palette=palettes[channel]
-        )
+        # Determine which renderer list to use
+        if plot in self.xy_plots:
+            renderer_list = self.xy_image_renderers
+            plot_index = self.xy_plots.index(plot)
+        else:
+            renderer_list = self.xz_image_renderers
+            plot_index = self.xz_plots.index(plot)
+        
+        # If renderer doesn't exist, create it
+        if renderer_list[plot_index] is None:
+            renderer_list[plot_index] = plot.image(
+                image=[data_flipped], 
+                x=0, y=0, 
+                dw=expected_shape[0], dh=expected_shape[1],
+                palette=palettes[channel]
+            )
+        else:
+            # Update existing renderer's data source
+            renderer_list[plot_index].data_source.data = {
+                'image': [data_flipped],
+                'x': [0],
+                'y': [0],
+                'dw': [expected_shape[0]],
+                'dh': [expected_shape[1]]
+            }
     
     def clear_cache(self):
         """Clear cluster cache (call when clustering changes)"""
@@ -277,9 +296,13 @@ class BoxViewer:
         self.current_sample = None
         self.status_text.object = "**Status:** Cache cleared - select a cluster"
         
-        # Clear all plots
+        # Clear all plots and reset renderer tracking
         for plot in self.xy_plots + self.xz_plots:
             plot.renderers = []
+        
+        # Reset renderer tracking
+        self.xy_image_renderers = [None, None, None]
+        self.xz_image_renderers = [None, None, None]
     
     def get_layout(self):
         """Return the complete BoxViewer layout"""
