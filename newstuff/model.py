@@ -8,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+from scipy.ndimage import rotate
 
 
 class SingleChannelCNN(nn.Module):
@@ -122,17 +123,99 @@ class ContrastiveModel(nn.Module):
         return features, projections
 
 
-class HDF5Dataset(Dataset):
-    """Dataset class for loading 3D data from HDF5 file"""
+class Augmentation3D:
+    """
+    Augmentation class for 3D volumes (3, 5, 20, 20).
+    Apply augmentations suitable for small 3D data.
+    """
     
-    def __init__(self, hdf5_path, dataset_key='data', transform=None):
+    def __init__(self, 
+                rotation_range=15,      # degrees
+                prob=0.5,
+                gaussian_noise_std=0.1,
+                shot_noise_std=0.1,
+                brightness_range=0.2
+                ):
+        
+        self.rotation_range = rotation_range
+        self.prob = prob
+        self.gaussian_noise_std = gaussian_noise_std
+        self.shot_noise_std = shot_noise_std
+        self.brightness_range = brightness_range
+    
+    def __call__(self, volume):
+        """
+        Apply random augmentations to a 3D volume.
+        
+        Args:
+            volume: numpy array of shape (3, 5, 20, 20)
+        
+        Returns:
+            Augmented volume of same shape
+        """
+        volume = volume.copy()
+        
+        # Random rotations
+        if self.rotation_range > 0:
+            for channel in range(volume.shape[0]):
+                # Rotation in XY plane (around Z axis)
+                angle_z = np.random.uniform(-self.rotation_range, self.rotation_range)
+                volume[channel] = rotate(volume[channel], angle_z, axes=(1, 2), reshape=False, order=1)
+        
+        # Random flip along z-axis (not same as 180-degree rotation)
+        if np.random.random() < self.prob:
+            # Flip along depth axis (axis=1 after channel)
+            volume = np.flip(volume, axis=1).copy()
+        
+        # Gaussian noise
+        if np.random.random() < self.prob and self.gaussian_noise_std > 0:
+            noise = np.random.normal(0, self.gaussian_noise_std, volume.shape)
+            volume += noise
+
+        # Shot noise
+        if np.random.random() < self.prob and self.shot_noise_std > 0:
+            noise = np.random.normal(0, self.shot_noise_std, volume.shape)
+            volume += volume * noise                    # element-wise multiplication
+
+        # Brightness adjustment
+        if np.random.random() < self.prob and self.brightness_range > 0:
+            brightness_factor = np.random.uniform(-self.brightness_range, self.brightness_range)
+            volume[:2, :, :] += brightness_factor
+
+        # Shift within plane - this wraps around values that go out of bounds
+        if np.random.random() * 2 < self.prob:
+            shift_x = np.random.randint(-5, 5)
+            shift_y = np.random.randint(-5, 5)
+            shift_z = np.random.randint(-2, 3)
+            volume = np.roll(volume, shift=(0, shift_z, shift_x, shift_y), axis=(0, 1, 2, 3))
+    
+        return volume.astype(np.float32)
+
+
+class HDF5Dataset(Dataset):
+    """Dataset class for loading 3D data from HDF5 file with augmentations"""
+    
+    def __init__(self, hdf5_path, dataset_key='data', augmentation=None, normalize=True):
         self.hdf5_path = hdf5_path
         self.dataset_key = dataset_key
-        self.transform = transform
+        self.augmentation = augmentation
+        self.normalize = normalize
         
         # Get dataset length without loading all data
         with h5py.File(hdf5_path, 'r') as f:
             self.length = len(f[dataset_key])
+            
+            # Compute dataset statistics for normalization (sample-based)
+            if self.normalize:
+                # Sample a subset to compute stats (avoid loading full dataset)
+                n_samples = min(1000, self.length)
+                indices = np.random.choice(self.length, n_samples, replace=False)
+                samples = [f[dataset_key][i] for i in indices]
+                all_samples = np.stack(samples)
+                
+                self.mean = all_samples.mean()
+                self.std = all_samples.std()
+                print(f"Dataset statistics: mean={self.mean:.4f}, std={self.std:.4f}")
     
     def __len__(self):
         return self.length
@@ -142,13 +225,17 @@ class HDF5Dataset(Dataset):
             sample = f[self.dataset_key][idx]  # Shape: (3, 5, 20, 20)
             
         sample = sample.astype(np.float32)
-
-        view1 = sample.copy()
-        view2 = sample.copy()
         
-        if self.transform:
-            view1 = self.transform(view1)
-            view2 = self.transform(view2)
+        if self.normalize:
+            sample = (sample - self.mean) / (self.std + 1e-8)
+        
+        # Create two augmented views for contrastive learning
+        if self.augmentation is not None:
+            view1 = self.augmentation(sample)
+            view2 = self.augmentation(sample)
+        else:
+            view1 = sample.copy()
+            view2 = sample.copy()
         
         return torch.from_numpy(view1), torch.from_numpy(view2)
 

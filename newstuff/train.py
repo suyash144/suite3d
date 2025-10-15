@@ -3,13 +3,12 @@ import os
 
 
 def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, feature_dim=64, num_epochs=500, device='cuda', 
-                            save_path='contrastive_model.pth', log_dir=None, experiment_name=None):
+                            save_path='contrastive_model.pth', log_dir=None, experiment_name=None, augmentation_config=None):
     """Main training function"""
     
     # Create dataset and dataloader
-    dataset = HDF5Dataset(hdf5_path, dataset_key=dataset_key)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
-                           num_workers=4, pin_memory=True)
+    dataset = HDF5Dataset(hdf5_path, dataset_key=dataset_key, augmentation=augmentation_config)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     
     model = ContrastiveModel(backbone_feature_dim=128, projection_dim=feature_dim)
     
@@ -31,6 +30,9 @@ def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, featu
     learner.writer.add_text('Training/Batch_Size', str(batch_size))
     learner.writer.add_text('Training/Learning_Rate', str(1e-3))
     learner.writer.add_text('Training/Dataset_Size', f'{len(dataset):,} samples')
+
+    os.makedirs(save_path, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
     
     # Training loop
     best_loss = float('inf')
@@ -78,7 +80,9 @@ if __name__ == "__main__":
 
     hdf5_path = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
 
-    exp_name = "no_aug"
+    exp_name = "contrastive_1"
+
+    augmentations = Augmentation3D()                # default augmentation settings
     
     learner = train_contrastive_model(
         hdf5_path=hdf5_path,
@@ -89,6 +93,7 @@ if __name__ == "__main__":
         save_path=os.path.join(r"C:\Users\suyash\UCL\suite3d\models", exp_name, "ckpt"),
         log_dir=os.path.join(r"C:\Users\suyash\UCL\suite3d\models", exp_name, "logs"),
         experiment_name=exp_name,
+        augmentation_config=augmentations
     )
     
     # Extract features for UMAP
