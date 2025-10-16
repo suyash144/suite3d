@@ -109,12 +109,12 @@ class ProjectionHead(nn.Module):
 class ContrastiveModel(nn.Module):
     """Complete contrastive learning model"""
     
-    def __init__(self, backbone_feature_dim=128, projection_dim=128):
+    def __init__(self, backbone_feature_dim=128, output_dim=32):
         super(ContrastiveModel, self).__init__()
         self.backbone = MultiChannelCNN(channel_feature_dim=32, feature_dim=backbone_feature_dim)
         self.projection_head = ProjectionHead(
             input_dim=backbone_feature_dim,
-            output_dim=projection_dim
+            output_dim=output_dim
         )
     
     def forward(self, x):
@@ -361,8 +361,8 @@ class ContrastiveLearner:
         with torch.no_grad():
             for view1, _ in tqdm(dataloader, desc='Extracting features'):
                 view1 = view1.to(self.device)
-                features, _ = self.model(view1)
-                all_features.append(features.cpu().numpy())
+                features, projections = self.model(view1)
+                all_features.append(projections.cpu().numpy())
         
         return np.concatenate(all_features, axis=0)
     

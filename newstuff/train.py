@@ -2,7 +2,7 @@ from model import *
 import os
 
 
-def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, feature_dim=64, num_epochs=500, device='cuda', 
+def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, output_dim=32, num_epochs=500, device='cuda', 
                             save_path='contrastive_model.pth', log_dir=None, experiment_name=None, augmentation_config=None):
     """Main training function"""
     
@@ -10,7 +10,7 @@ def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, featu
     dataset = HDF5Dataset(hdf5_path, dataset_key=dataset_key, augmentation=augmentation_config)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     
-    model = ContrastiveModel(backbone_feature_dim=128, projection_dim=feature_dim)
+    model = ContrastiveModel(backbone_feature_dim=128, output_dim=output_dim)
     
     if os.path.exists(os.path.dirname(save_path)):
         checkpoint = torch.load(os.path.join(os.path.dirname(save_path), "ckpt_best.pth"), map_location=device)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
 
     hdf5_path = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
 
-    exp_name = "contrastive_1"
+    exp_name = "contrastive_32dim"
 
     augmentations = Augmentation3D()                # default augmentation settings
     
@@ -88,6 +88,7 @@ if __name__ == "__main__":
         hdf5_path=hdf5_path,
         dataset_key='data',
         batch_size=256,
+        output_dim=32,
         num_epochs=300,
         device='cuda',
         save_path=os.path.join(r"C:\Users\suyash\UCL\suite3d\models", exp_name, "ckpt"),
@@ -104,5 +105,5 @@ if __name__ == "__main__":
     print(f"Extracted features shape: {features.shape}")
     
     # Save features for later use
-    np.save('contrastive_features.npy', features)
-    print("Features saved to contrastive_features.npy")
+    np.save(f'{exp_name}_features.npy', features)
+    print(f"Features saved to {exp_name}_features.npy")

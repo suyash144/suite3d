@@ -87,6 +87,7 @@ class AppOrchestrator:
     
     def load_data(self):
         """Load and prepare all data with sampling coordination"""
+        print("Loading UMAP data from:", self.umap_file_path)
         try:
             if not os.path.exists(self.umap_file_path):
                 self.status_text.object = f"**Error:** File not found: {self.umap_file_path}"
@@ -135,7 +136,7 @@ class AppOrchestrator:
             
             display_points = len(self.display_data)
             self.status_text.object = f"**Status:** Loaded {n_points:,} points, displaying {display_points:,} with 20 clusters"
-            
+
         except Exception as e:
             self.status_text.object = f"**Error:** Could not load data: {str(e)}"
     
@@ -390,7 +391,7 @@ def create_app(umap_file="umap_2d.npy", hdf5_path="data.h5"):
     orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file), hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app("umap_2d.npy", r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+app = create_app("contrastive_umap.npy", r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 app.servable()
 
 if __name__ == "__main__":
