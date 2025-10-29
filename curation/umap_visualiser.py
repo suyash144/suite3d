@@ -97,7 +97,7 @@ class UMAPVisualiser:
             
             # Notify orchestrator if callback is set
             if self.on_cluster_selected:
-                self.on_cluster_selected(self.last_clicked_cluster)
+                self.on_cluster_selected(self.last_clicked_cluster, tapped_idx)
     
     def on_cluster_mode_toggle(self, new_mode):
         """Handle cluster mode toggle changes"""

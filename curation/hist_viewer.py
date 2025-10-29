@@ -128,33 +128,33 @@ class HistViewer:
             # Mean intensity per sample
             properties[f'Mean Intensity Ch{ch+1}'] = np.mean(channel_data, axis=(1, 2, 3))
             
-            # Max intensity per sample  
-            properties[f'Max Intensity Ch{ch+1}'] = np.max(channel_data, axis=(1, 2, 3))
+            # # Max intensity per sample  
+            # properties[f'Max Intensity Ch{ch+1}'] = np.max(channel_data, axis=(1, 2, 3))
             
-            # Z-centroid (weighted average Z position)
-            z_weights = np.sum(channel_data, axis=(2, 3))  # Sum over X, Y: (batch_size, 5)
-            z_positions = np.arange(5)[np.newaxis, :]  # (1, 5)
-            z_centroids = np.sum(z_weights * z_positions, axis=1) / (np.sum(z_weights, axis=1) + 1e-8)
-            properties[f'Z-Centroid Ch{ch+1}'] = z_centroids
+            # # Z-centroid (weighted average Z position)
+            # z_weights = np.sum(channel_data, axis=(2, 3))  # Sum over X, Y: (batch_size, 5)
+            # z_positions = np.arange(5)[np.newaxis, :]  # (1, 5)
+            # z_centroids = np.sum(z_weights * z_positions, axis=1) / (np.sum(z_weights, axis=1) + 1e-8)
+            # properties[f'Z-Centroid Ch{ch+1}'] = z_centroids
             
-            if ch == 0:  # Only compute spatial properties for first channel to avoid redundancy
-                # Center of mass for X and Y (using max projection)
-                max_proj = np.max(channel_data, axis=1)  # (batch_size, 20, 20)
+            # if ch == 0:  # Only compute spatial properties for first channel to avoid redundancy
+            #     # Center of mass for X and Y (using max projection)
+            #     max_proj = np.max(channel_data, axis=1)  # (batch_size, 20, 20)
                 
-                # Create coordinate grids
-                y_coords, x_coords = np.meshgrid(np.arange(20), np.arange(20), indexing='ij')
+            #     # Create coordinate grids
+            #     y_coords, x_coords = np.meshgrid(np.arange(20), np.arange(20), indexing='ij')
                 
-                # Compute center of mass for each sample
-                com_x = np.zeros(batch_size)
-                com_y = np.zeros(batch_size)
+            #     # Compute center of mass for each sample
+            #     com_x = np.zeros(batch_size)
+            #     com_y = np.zeros(batch_size)
                 
-                for i in range(batch_size):
-                    total_intensity = np.sum(max_proj[i]) + 1e-8
-                    com_x[i] = np.sum(max_proj[i] * x_coords) / total_intensity
-                    com_y[i] = np.sum(max_proj[i] * y_coords) / total_intensity
+            #     for i in range(batch_size):
+            #         total_intensity = np.sum(max_proj[i]) + 1e-8
+            #         com_x[i] = np.sum(max_proj[i] * x_coords) / total_intensity
+            #         com_y[i] = np.sum(max_proj[i] * y_coords) / total_intensity
                 
-                properties['Center of Mass X Ch1'] = com_x
-                properties['Center of Mass Y Ch1'] = com_y
+            #     properties['Center of Mass X Ch1'] = com_x
+            #     properties['Center of Mass Y Ch1'] = com_y
         
         return properties
     

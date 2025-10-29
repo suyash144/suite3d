@@ -13,6 +13,7 @@ class BoxViewer:
         self.use_sampling = use_sampling
         self.hdf5_file = None
         self.dataset = None
+        self.display_dataset = None  # Subset of dataset to display (if sample_indices provided)
         self.cluster_cache = {}
         self.current_cluster_id = None
         self.current_sample = None  # Current (3, 5, 20, 20) array to display
@@ -24,8 +25,8 @@ class BoxViewer:
         # UI Controls
         self.view_selector = pn.widgets.RadioButtonGroup(
             name="View Type",
-            options=["Random", "Mean", "Median"],
-            value="Random",
+            options=["Selected", "Mean", "Median"],
+            value="Selected",
             width=200
         )
         
@@ -94,6 +95,7 @@ class BoxViewer:
                     random_sample_idx = np.random.choice(len(self.sample_indices))
                     random_orig_idx = self.sample_indices[random_sample_idx]
                     status_msg = f"Showing random sample {random_orig_idx}"
+                    self.display_dataset = self.dataset[np.sort(self.sample_indices)]
                 else:
                     n_samples = self.dataset.shape[0]
                     random_orig_idx = np.random.choice(n_samples)
@@ -123,7 +125,7 @@ class BoxViewer:
         plot.title.text_font_size = "10pt"
         return plot
     
-    def load_cluster_data(self, cluster_id, display_data):
+    def load_cluster_data(self, cluster_id, display_data, tapped_idx):
         """Load and cache cluster statistics from HDF5"""
         if self.dataset is None:
             self.status_text.object = "**Error:** No HDF5 dataset available"
@@ -132,6 +134,7 @@ class BoxViewer:
         # Check if already cached and clustering hasn't changed
         if cluster_id in self.cluster_cache:
             self.current_cluster_id = cluster_id
+            self.cluster_cache[cluster_id]["selected"] = self.display_dataset[tapped_idx]
             self._update_current_sample()
             self.status_text.object = f"**Status:** Loaded cached cluster {cluster_id}"
             return
@@ -169,12 +172,13 @@ class BoxViewer:
             distances = np.linalg.norm(cluster_umap - com, axis=1)
             closest_idx = np.argmin(distances)
             median_sample = cluster_samples[closest_idx]        # (3, 5, 20, 20)
-            random_idx = np.random.choice(len(cluster_original_indices))
-            random_sample = cluster_samples[random_idx]  # (3, 5, 20, 20)
+            # random_idx = np.random.choice(len(cluster_original_indices), size=min(10, len(cluster_original_indices)), replace=False)
+            # random_sample = cluster_samples[random_idx]  # (3, 5, 20, 20)
+            selected_sample = self.display_dataset[tapped_idx]
             
             # Cache results
             self.cluster_cache[cluster_id] = {
-                "random": random_sample,
+                "selected": selected_sample,
                 "mean": mean_sample,
                 "median": median_sample, 
             }

@@ -14,15 +14,17 @@ pn.extension()
 
 
 class AppOrchestrator:
-    def __init__(self, umap_file_path="umap_embeddings.npy", hdf5_path="data.h5"):
+    def __init__(self, umap_file_path, nn_features_path, hdf5_path="data.h5"):
         self.umap_file_path = umap_file_path
         self.hdf5_path = hdf5_path
         self.classifications_file = None
         self.sample_size = 50000
         self.use_sampling = True
+        self.nn_features_path = nn_features_path
         
         # Shared data state
         self.umap_embedding = None
+        self.nn_features = None
         self.full_data = None
         self.display_data = None
         self.classifications = None
@@ -101,7 +103,15 @@ class AppOrchestrator:
                 return
             
             n_points = self.umap_embedding.shape[0]
-            
+
+            # Load NN features
+            self.nn_features = np.load(self.nn_features_path)
+            if self.nn_features.shape[0] != n_points:
+                self.status_text.object = "**Error:** NN features size mismatch with UMAP points"
+                print("NN features shape:", self.nn_features.shape)
+                print("UMAP embedding shape:", self.umap_embedding.shape)
+                return
+
             # Set up classifications file
             file_stem = Path(self.umap_file_path).stem
             self.classifications_file = os.path.join(os.getcwd(), "curation", f"{file_stem}_classifications.json")
@@ -120,7 +130,7 @@ class AppOrchestrator:
             
             # Initial clustering
             kmeans = KMeans(n_clusters=20, random_state=42, n_init='auto')
-            initial_clusters = kmeans.fit_predict(self.umap_embedding)
+            initial_clusters = kmeans.fit_predict(self.nn_features)
             
             # Create full dataset
             self.full_data = pd.DataFrame({
@@ -184,7 +194,7 @@ class AppOrchestrator:
             if self.box_viewer and self.hist_viewer:
                 self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
     
-    def on_cluster_selected(self, cluster_id):
+    def on_cluster_selected(self, cluster_id, tapped_idx):
         """Handle cluster selection from UMAP visualiser"""
         # This will be called when a cluster is selected in the UMAP
         # Update status and prepare for classification
@@ -194,7 +204,7 @@ class AppOrchestrator:
 
         # Load cluster data in BoxViewer
         if self.box_viewer:
-            self.box_viewer.load_cluster_data(cluster_id, self.display_data)
+            self.box_viewer.load_cluster_data(cluster_id, self.display_data, tapped_idx)
         
         # also load in HistViewer
         if self.hist_viewer:
@@ -210,7 +220,7 @@ class AppOrchestrator:
         
         try:
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-            new_clusters = kmeans.fit_predict(self.umap_embedding)
+            new_clusters = kmeans.fit_predict(self.nn_features)
             
             # Update full dataset
             self.full_data['cluster'] = new_clusters
@@ -318,7 +328,7 @@ class AppOrchestrator:
     def get_layout(self):
         """Return the complete application layout"""
         if self.umap_visualiser is None:
-            return pn.pane.Markdown("Loading...")
+            return pn.pane.Markdown("Error loading UMAP visualiser.", width=700)
         
         # Get UMAP plot
         plot_pane = self.umap_visualiser.get_plot_pane()
@@ -386,12 +396,13 @@ class AppOrchestrator:
         )
 
 
-def create_app(umap_file="umap_2d.npy", hdf5_path="data.h5"):
+def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
     """Create the application with orchestrator"""
-    orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file), hdf5_path=hdf5_path)
+    orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file), nn_features_path=nn_features_path, hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app("contrastive_umap.npy", r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+app = create_app("nnUMAP.npy",  r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\contrastive_16dim_features.npy", 
+                                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 app.servable()
 
 if __name__ == "__main__":
