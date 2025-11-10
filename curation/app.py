@@ -9,6 +9,7 @@ from pathlib import Path
 from umap_visualiser import UMAPVisualiser
 from box_viewer import BoxViewer
 from hist_viewer import HistViewer
+from sklearn.linear_model import SGDClassifier
 
 pn.extension()
 
@@ -29,11 +30,15 @@ class AppOrchestrator:
         self.display_data = None
         self.classifications = None
         self.sample_indices = None
+        self.cell_probs = None
+        self.labelled_features_idx = []
+        self.labels = []
         
         # Components
         self.umap_visualiser = None
         self.box_viewer = None
         self.hist_viewer = None
+        self.linear_model = SGDClassifier(loss='log_loss')
         
         # Shared widgets
         self.cluster_slider = pn.widgets.IntSlider(
@@ -72,6 +77,17 @@ class AppOrchestrator:
             button_type='success', 
             width=200
         )
+
+        self.view_toggle = pn.widgets.ToggleGroup(
+            name='View Mode', 
+            options=['Cluster', 'Probability'],
+            behavior='radio',
+            value='Cluster', 
+            button_type='primary',
+            button_style='outline',
+            width=200
+        )
+        self.view_toggle.disabled = True
         
         # Status text
         self.status_text = pn.pane.Markdown(f"**Status:** Loading {umap_file_path}...", width=200)
@@ -86,6 +102,9 @@ class AppOrchestrator:
         # Initialize
         self.load_data()
         self.create_components()
+
+        # Callback for view toggle (needs to be sent to umap visualiser)
+        self.view_toggle.param.watch(self.umap_visualiser.set_view_mode, 'value')
     
     def load_data(self):
         """Load and prepare all data with sampling coordination"""
@@ -261,6 +280,7 @@ class AppOrchestrator:
         
         # Classify all points in the cluster
         cluster_mask = self.full_data['cluster'] == self.selected_cluster
+        clus_idx = np.where(cluster_mask)[0]
         cluster_size = cluster_mask.sum()
         
         self.full_data.loc[cluster_mask, 'classification'] = classification_type
@@ -275,7 +295,21 @@ class AppOrchestrator:
         # Update status
         cell_count = sum(1 for c in self.full_data['classification'] if c == 'cell')
         not_cell_count = sum(1 for c in self.full_data['classification'] if c == 'not_cell')
-        
+
+        self.status_text.object = "Classifying cluster..."
+
+        self.labelled_features_idx.extend(clus_idx)
+        self.labels.extend(np.array([1 if classification_type == 'cell' else 0] * clus_idx.shape[0]))
+
+        if len(np.unique(self.labels)) > 1:
+            # Fit model if we have positive and negative samples
+            self.linear_model.fit(self.nn_features[self.labelled_features_idx], self.labels)
+            class_idx = np.argwhere(self.linear_model.classes_ == 1)[0][0]
+            self.cell_probs = self.linear_model.predict_proba(self.nn_features[self.sample_indices])[:, class_idx]
+            self.umap_visualiser.set_probs(self.cell_probs)
+
+            self.view_toggle.disabled = False
+
         self.status_text.object = f"**Status:** Classified cluster {self.selected_cluster} ({cluster_size:,} points) as '{classification_type}' | Total - Cells: {cell_count:,}, Not cells: {not_cell_count:,}"
         
         # Reset selection
@@ -288,6 +322,12 @@ class AppOrchestrator:
         
         self.full_data['classification'] = 'unclassified'
         self.prepare_display_data()
+        self.linear_model = SGDClassifier(loss='log_loss')
+        self.labelled_features_idx = []
+        self.labels = []
+        self.cell_probs = None
+        self.view_toggle.value = 'Cluster'
+        self.view_toggle.disabled = True
         
         if self.umap_visualiser:
             self.umap_visualiser.update_data(self.display_data)
@@ -351,13 +391,8 @@ class AppOrchestrator:
             plot_pane,
             width=720
         )
-        
-        controls = pn.Column(
-            self.cluster_slider,
-            pn.Spacer(height=10),
-            self.cluster_button,
-            pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=200),
-            pn.Spacer(height=20),
+
+        classification_controls = [
             "## Cluster Classification",
             self.classify_cluster_cell_button,
             pn.Spacer(height=10),
@@ -368,8 +403,17 @@ class AppOrchestrator:
             pn.Spacer(height=10),
             self.save_button,
             pn.Spacer(height=20),
-            self.status_text,
-            width=250,
+            self.status_text
+        ]
+
+        controls = pn.Column(
+            self.cluster_slider,
+            pn.Spacer(height=10),
+            self.cluster_button,
+            pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=200),
+            self.view_toggle,
+            *classification_controls,
+            width=300,
             margin=(10, 10)
         )
         

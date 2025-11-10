@@ -1,8 +1,9 @@
 import numpy as np
 import panel as pn
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, TapTool
-from bokeh.palettes import Category20
+from bokeh.models import ColumnDataSource, HoverTool, TapTool, ColorBar, LinearColorMapper
+from bokeh.palettes import Category20, Reds256
+from bokeh.colors import RGB
 
 class UMAPVisualiser:
     """Pure UMAP visualisation component - handles only plot rendering and interactions"""
@@ -12,12 +13,15 @@ class UMAPVisualiser:
         Initialize with data DataFrame containing: umap_x, umap_y, cluster, classification
         """
         self.data = data
+        self.probs = None
         self.source = None
         self.plot = None
         self.scatter = None
         self.cluster_colors = Category20[20]
-        self.selection_mode = "Cluster Mode"
+        self.view_mode = 'cluster'
         self.last_clicked_cluster = None
+        self.color_mapper = LinearColorMapper(palette=Reds256[::-1], low=0, high=1)
+        self.color_bar = None
         
         # Callback for cluster selection - set by orchestrator
         self.on_cluster_selected = None
@@ -28,10 +32,30 @@ class UMAPVisualiser:
         # Initial render if data provided
         if self.data is not None:
             self.update_plot()
+
+    def set_probs(self, probs):
+        """Set probabilities for coloring points"""
+        if self.data is not None and probs.shape[0] != self.data.shape[0]:
+            print(self.data.shape, probs.shape)
+            raise ValueError("Length of probabilities must match number of data points.")
+        self.probs = probs
+
+        if self.data is not None:
+            self.update_plot()
     
+    def set_view_mode(self, event):
+        """Set view mode: 'cluster' or 'probability'"""
+        mode = event.new.lower()
+        if mode not in ['cluster', 'probability']:
+            raise ValueError("View mode must be 'cluster' or 'probability'.")
+        
+        self.view_mode = mode
+        self.update_plot()
+
     def update_data(self, new_data):
         """Update with new data and re-render"""
         self.data = new_data
+        self.view_mode = 'cluster'  # Reset to cluster mode on data update
         self.update_plot()
     
     def get_plot_pane(self):
@@ -68,26 +92,17 @@ class UMAPVisualiser:
         # Clear existing tools and rebuild
         self.plot.toolbar.tools = []
         
-        if self.selection_mode == 'Cluster Mode':
-            # Add basic navigation tools
-            from bokeh.models import PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
-            self.plot.add_tools(PanTool(), WheelZoomTool(), BoxZoomTool(), ResetTool(), SaveTool())
-            
-            # Add tap tool for cluster selection
-            tap_tool = TapTool()
-            self.plot.add_tools(tap_tool)
-            
-        else:  # Point mode
-            # Add selection tools
-            from bokeh.models import PanTool, WheelZoomTool, BoxZoomTool, BoxSelectTool, LassoSelectTool, ResetTool, SaveTool
-            self.plot.add_tools(
-                PanTool(), WheelZoomTool(), BoxZoomTool(), 
-                BoxSelectTool(), LassoSelectTool(), ResetTool(), SaveTool()
-            )
+        # Add basic navigation tools
+        from bokeh.models import PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool
+        self.plot.add_tools(PanTool(), WheelZoomTool(), BoxZoomTool(), ResetTool(), SaveTool())
+        
+        # Add tap tool for cluster selection
+        tap_tool = TapTool()
+        self.plot.add_tools(tap_tool)
     
     def on_point_tap(self, attr, old, new):
         """Handle point tap in cluster mode"""
-        if self.selection_mode != 'Cluster Mode' or not new or self.data is None:
+        if not new or self.data is None:
             return
         
         # Get the cluster of the tapped point
@@ -99,17 +114,8 @@ class UMAPVisualiser:
             if self.on_cluster_selected:
                 self.on_cluster_selected(self.last_clicked_cluster, tapped_idx)
     
-    def on_cluster_mode_toggle(self, new_mode):
-        """Handle cluster mode toggle changes"""
-        self.selection_mode = new_mode
-        self.update_plot_tools()
-        
-        # Trigger plot refresh
-        if hasattr(self, 'plot_pane'):
-            self.plot_pane.param.trigger('object')
-    
-    def get_point_colors_and_properties_fast(self):
-        """Optimized color assignment using vectorized operations"""
+    def get_point_colors_and_properties(self):
+        """Color assignment using vectorized operations"""
         if self.data is None or len(self.data) == 0:
             return [], []
         
@@ -128,13 +134,17 @@ class UMAPVisualiser:
         not_cell_mask = classifications == 'not_cell'
         unclassified_mask = ~(cell_mask | not_cell_mask)
         
-        # Set colors
-        colors[cell_mask] = 'black'
-        colors[not_cell_mask] = 'gray'
-        
-        # For unclassified, use cluster colors
-        for i in np.where(unclassified_mask)[0]:
-            colors[i] = self.cluster_colors[clusters[i] % len(self.cluster_colors)]
+        if self.view_mode == "probability" and self.probs is not None:
+            # For all ROIs, use probabilities to set colors
+            for i in range(n_points):
+                prob = self.probs[i]
+                colors[i] = RGB(r=255, g=int(255 * (1 - prob)), b=int(255 * (1 - prob)))
+        else:
+            colors[cell_mask] = 'black'
+            colors[not_cell_mask] = 'gray'
+            # For unclassified, use cluster colors
+            for i in np.where(unclassified_mask)[0]:
+                colors[i] = self.cluster_colors[clusters[i] % len(self.cluster_colors)]
         
         # Set alphas
         alphas[cell_mask] = 0.8
@@ -148,7 +158,7 @@ class UMAPVisualiser:
             return
         
         # Get colors efficiently
-        colors, alphas = self.get_point_colors_and_properties_fast()
+        colors, alphas = self.get_point_colors_and_properties()
         
         # Prepare data source
         self.source = ColumnDataSource(data=dict(
@@ -184,14 +194,21 @@ class UMAPVisualiser:
             selection_color="red",
             nonselection_alpha=0.1
         )
+
+        if self.view_mode == 'probability' and self.probs is not None and self.color_bar is None:
+            self.color_bar = ColorBar(
+                color_mapper=self.color_mapper,
+                label_standoff=12,
+                border_line_color=None,
+                location=(0, 0),
+                title="Probability"
+            )
+            self.plot.add_layout(self.color_bar, 'right')
         
         # Set up tap callback for cluster mode
         if self.source:
             self.source.selected.on_change('indices', self.on_point_tap)
         
-        # Update tools
-        self.update_plot_tools()
-    
     def get_selected_indices(self):
         """Get currently selected point indices"""
         if self.source is None:
@@ -202,8 +219,3 @@ class UMAPVisualiser:
         """Clear current selection"""
         if self.source is not None:
             self.source.selected.indices = []
-    
-    def set_selection_mode(self, mode):
-        """Set selection mode ('Cluster Mode' or 'Point Mode')"""
-        self.selection_mode = mode
-        self.update_plot_tools()
