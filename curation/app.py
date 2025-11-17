@@ -168,6 +168,7 @@ class AppOrchestrator:
 
         except Exception as e:
             self.status_text.object = f"**Error:** Could not load data: {str(e)}"
+            raise ValueError(f"Could not load data: {str(e)}")
     
     def prepare_display_data(self):
         """Prepare sampled data for display"""
@@ -442,11 +443,15 @@ class AppOrchestrator:
 
 def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
     """Create the application with orchestrator"""
-    orchestrator = AppOrchestrator(os.path.join(os.getcwd(), "curation", umap_file), nn_features_path=nn_features_path, hdf5_path=hdf5_path)
+    orchestrator = AppOrchestrator(umap_file, nn_features_path=nn_features_path, hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app("nnUMAP.npy",  r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\contrastive_16dim_features.npy", 
-                                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+# app = create_app("nnUMAP.npy",  r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\contrastive_16dim_features.npy", 
+#                                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+
+app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\umap_2d.npy",  
+                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\pca_embeddings.npy", 
+                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 app.servable()
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import os, sys
 sys.path.insert(0, os.getcwd())
 from suite3d import quality_metrics
 from matplotlib.cm import ScalarMappable
+import h5py
 
 
 def compute_shot_noise_for_all_sessions():
@@ -57,6 +58,23 @@ def umap_part():
     plt.show()
 
 
-# compute_shot_noise_for_all_sessions()
+if __name__ == "__main__":
 
-umap_part()
+    raw_root = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash"
+    all_shot = []
+
+
+    for session in os.listdir(raw_root):
+        session_path = os.path.join(raw_root, session)
+        if not os.path.isdir(session_path):
+            continue
+        if not os.path.exists(os.path.join(session_path, "shot_noise.npy")):
+            continue
+
+        shot = np.load(os.path.join(session_path, "shot_noise.npy"))
+        all_shot.extend(shot)
+    
+    dataset_path = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
+    with h5py.File(dataset_path, 'r+') as f:
+        f['shot_noise'][:] = np.array(all_shot)
+

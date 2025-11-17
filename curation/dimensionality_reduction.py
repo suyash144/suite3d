@@ -4,7 +4,7 @@ from typing import Iterable, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import IncrementalPCA
+from sklearn.decomposition import IncrementalPCA, PCA
 from sklearn.cluster import HDBSCAN
 from umap import UMAP
 import json
@@ -29,6 +29,21 @@ def _iter_batches_permod(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.nd
             arr[~np.isfinite(arr)] = 0.0
             
         yield x0, x1, x2
+
+
+def _iter_batches(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Yield batches: returns x shaped (B,2000)."""
+    N = X.shape[0]
+    for start in range(0, N, batch_size):
+        stop = min(N, start + batch_size)
+        xb = X[start:stop].astype(np.float32)  # (B,3,5,20,20)
+        
+        # Split modalities and flatten last 3 dims
+        x = xb[:].reshape(xb.shape[0], -1)  # (B,2000)
+        
+        x[~np.isfinite(x)] = 0.0
+            
+        yield x
 
 
 def run_permod_pca_umap(
@@ -175,6 +190,255 @@ def run_permod_pca_umap(
     return out_dir
 
 
+def single_modality(
+    X: np.ndarray,
+    ncomp: int = 32,
+    batch_size: int = 4096,
+    out_dir: str = "pca_permod_umap",
+    whiten: bool = False,
+    seed: int = 0,
+    umap_neighbors: int = 30,
+    umap_min_dist: float = 0.1,
+    savename: str = "umap_2d",
+    variance_threshold = 1e-8
+) -> str:
+    """
+    Per-modality IncrementalPCA, concatenate embeddings, then UMAP to 2D.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    N = X.shape[0]
+
+    effective_ncomp = ncomp
+    sample_size = min(1000, N)
+    
+    # Initialize IncrementalPCA with appropriate number of components
+    ipca = IncrementalPCA(
+        n_components=effective_ncomp, 
+        batch_size=min(batch_size, sample_size)
+    )
+
+    # Calculate total embedding dimension
+    K = ipca.n_components
+
+    # Pass 2: fit IncrementalPCA per modality
+    print("Fitting PCA models...")
+    for x in _iter_batches(X, batch_size):
+        xs_filtered = []
+        x_filtered = x
+        xs_filtered.append(x_filtered)
+        ipca.partial_fit(x_filtered)
+
+    # Pass 3: transform and concatenate
+    print("Transforming data...")
+    emb_path = os.path.join(out_dir, "embeddings_permod.npy")
+    Z = np.lib.format.open_memmap(emb_path, mode="w+", dtype=np.float32, shape=(N, K))
+
+    i = 0
+    
+    for x in _iter_batches(X, batch_size):
+        
+        # PCA transform
+        z = ipca.transform(x)
+        
+        if whiten:
+            explained_var = ipca.explained_variance_
+            # Add small epsilon to prevent division by zero
+            z = z / np.sqrt(np.maximum(explained_var, 1e-12))
+            
+        Zb = z.astype(np.float32)
+        
+        # Store batch
+        b = Zb.shape[0]
+        Z[i:i+b] = Zb
+        i += b
+
+    np.save(os.path.join(out_dir, "pca_embeddings.npy"), Z)
+
+    print("Running UMAP...")
+    umap_model = UMAP(
+        n_neighbors=umap_neighbors,
+        min_dist=umap_min_dist,
+        metric="euclidean",
+        random_state=seed,
+    )
+
+    # Convert memmap to array for UMAP
+    Z_array = np.array(Z)
+    Y = umap_model.fit_transform(Z_array)
+    
+    np.save(os.path.join(out_dir, f"{savename}.npy"), Y.astype(np.float32))
+    # save_scatter(os.path.join(out_dir, f"{savename}.png"), Y)
+
+    print(f"Pipeline complete. Results saved to: {out_dir}")
+    return out_dir
+
+
+def PCAfunction(
+    X: np.ndarray,
+    ncomp: int = 32,
+    out_dir: str = "pca_permod_umap",
+    whiten: bool = False,
+    seed: int = 0,
+    umap_neighbors: int = 30,
+    umap_min_dist: float = 0.1,
+    savename: str = "umap_2d",
+    visualize_pcs: bool = True,
+    n_pcs_to_visualize: int = 16,
+    image_shape: tuple = None,
+    channel_names: list = None,  # e.g., ['slice1', 'slice2', ...] or ['R', 'G', 'B', ...]
+) -> str:
+    """
+    PCA reduction followed by UMAP to 2D.
+    """    
+    os.makedirs(out_dir, exist_ok=True)
+
+    N = X.shape[0]
+    X = X.reshape(N, -1).astype(np.float32)
+    
+    # Fit PCA on all data at once
+    print(f"Fitting PCA with {ncomp} components...")
+    pca = PCA(n_components=ncomp, whiten=whiten, random_state=seed)
+    Z = pca.fit_transform(X).astype(np.float32)
+    
+    print(f"PCA reduced data to {pca.n_components_} components")
+    print(f"Explained variance ratio: {pca.explained_variance_ratio_.sum():.3f}")
+    
+    # Save PCA embeddings
+    emb_path = os.path.join(out_dir, "pca_embeddings.npy")
+    np.save(emb_path, Z)
+    
+    # Visualize principal components
+    if visualize_pcs:
+        print("Visualizing principal components...")
+        n_viz = min(n_pcs_to_visualize, pca.n_components_)
+        
+        # Save raw PC components
+        pc_components = pca.components_[:n_viz]
+        np.save(os.path.join(out_dir, "pc_components.npy"), pc_components)
+        
+        if image_shape is not None:
+            if len(image_shape) == 3 and image_shape[0] <= 10:
+                _visualize_pcs_multichannel(pc_components, image_shape, pca.explained_variance_ratio_, 
+                                           out_dir, n_viz, channel_names)
+        
+        # Always save explained variance plot
+        _plot_explained_variance(pca, out_dir)
+        
+        print(f"PC visualizations saved to: {out_dir}")
+    
+    # Run UMAP
+    print("Running UMAP...")
+    umap_model = UMAP(
+        n_neighbors=umap_neighbors,
+        min_dist=umap_min_dist,
+        metric="euclidean",
+        random_state=seed,
+    )
+    Y = umap_model.fit_transform(Z)
+    
+    # Save UMAP results
+    np.save(os.path.join(out_dir, f"{savename}.npy"), Y.astype(np.float32))
+    
+    print(f"Pipeline complete. Results saved to: {out_dir}")
+    return out_dir
+
+
+def _visualize_pcs_multichannel(pc_components, image_shape, var_ratios, out_dir, n_viz, channel_names=None):
+    """
+    Visualize PCs for multi-channel/multi-slice data (e.g., shape (5, 20, 20)).
+    Shows each channel/slice as a separate 2D heatmap.
+    """    
+    n_channels, height, width = image_shape
+    
+    if channel_names is None:
+        channel_names = [f'Ch{i+1}' for i in range(n_channels)]
+    
+    # Create a large figure showing all PCs and channels
+    fig = plt.figure(figsize=(n_channels * 3, n_viz * 2.5))
+    
+    for pc_idx in range(n_viz):
+        pc = pc_components[pc_idx].reshape(image_shape)
+        
+        # Normalize across all channels for consistent color scale
+        vmin, vmax = pc.min(), pc.max()
+        
+        for ch_idx in range(n_channels):
+            ax = plt.subplot(n_viz, n_channels, pc_idx * n_channels + ch_idx + 1)
+            
+            im = ax.imshow(pc[ch_idx], cmap='RdBu_r', vmin=vmin, vmax=vmax, aspect='auto')
+            
+            # Add title only on top row
+            if pc_idx == 0:
+                ax.set_title(channel_names[ch_idx], fontsize=10)
+            
+            # Add PC label only on left column
+            if ch_idx == 0:
+                ax.set_ylabel(f'PC{pc_idx+1}\n({var_ratios[pc_idx]:.1%})', fontsize=9)
+            
+            ax.set_xticks([])
+            ax.set_yticks([])
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "pc_channels_grid.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # Also create individual PC visualizations with colorbars
+    pc_dir = os.path.join(out_dir, "individual_pcs")
+    os.makedirs(pc_dir, exist_ok=True)
+    
+    for pc_idx in range(min(n_viz, 8)):  # Save detailed view for first 8 PCs
+        pc = pc_components[pc_idx].reshape(image_shape)
+        
+        fig, axes = plt.subplots(1, n_channels, figsize=(n_channels * 3, 3))
+        if n_channels == 1:
+            axes = [axes]
+        
+        vmin, vmax = pc.min(), pc.max()
+        
+        for ch_idx in range(n_channels):
+            ax = axes[ch_idx]
+            im = ax.imshow(pc[ch_idx], cmap='RdBu_r', vmin=vmin, vmax=vmax)
+            ax.set_title(f'{channel_names[ch_idx]}', fontsize=12)
+            ax.axis('off')
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        
+        fig.suptitle(f'PC{pc_idx+1} ({var_ratios[pc_idx]:.2%} variance explained)', 
+                     fontsize=14, y=1.02)
+        plt.tight_layout()
+        plt.savefig(os.path.join(pc_dir, f"pc{pc_idx+1}_channels.png"), 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+
+
+def _plot_explained_variance(pca, out_dir):
+    """Plot explained variance."""
+    import matplotlib.pyplot as plt
+    
+    plt.figure(figsize=(10, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.bar(range(1, len(pca.explained_variance_ratio_) + 1), pca.explained_variance_ratio_)
+    plt.xlabel('Principal Component')
+    plt.ylabel('Explained Variance Ratio')
+    plt.title('Variance Explained by Each PC')
+    plt.grid(alpha=0.3)
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(range(1, len(pca.explained_variance_ratio_) + 1), 
+             np.cumsum(pca.explained_variance_ratio_), marker='o')
+    plt.xlabel('Number of Components')
+    plt.ylabel('Cumulative Explained Variance')
+    plt.title('Cumulative Variance Explained')
+    plt.grid(alpha=0.3)
+    plt.axhline(y=0.95, color='r', linestyle='--', alpha=0.5, label='95%')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "explained_variance.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+
+
 def save_scatter(p: str, Y: np.ndarray, labels=None):
     """Save a simple scatter plot of UMAP results."""
     plt.figure(figsize=(7, 6), dpi=120)
@@ -270,21 +534,40 @@ def cluster_representatives(umap_2d, labels, full_features, save_path=None, save
 if __name__ == "__main__":
 
 
-    H5_PATH = r"\path\to\your\h5\file.h5"
-    OUT_DIR = r"\where\you\want\to\save\outputs"
+    H5_PATH = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
+    OUT_DIR = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output"
 
     with h5py.File(H5_PATH, 'r') as f:
-        X = f["data"][:]
+        X = f["data"][:32848, 2, :, :, :]
     
-    run_permod_pca_umap(
+    # run_permod_pca_umap(
+    #     X=X,
+    #     ncomp_per_mod=32,
+    #     batch_size=4096,
+    #     out_dir=OUT_DIR,
+    #     whiten=True,
+    #     seed=None,
+    #     umap_neighbors=30,
+    #     umap_min_dist=0.1,
+    #     savename="umap_2d",
+    # )
+
+    # single_modality(
+    #     X=X,
+    #     ncomp=16,
+    #     batch_size=8192,
+    #     out_dir=OUT_DIR,
+    #     whiten=False,
+    #     seed=None,
+    #     umap_neighbors=30,
+    #     umap_min_dist=0.1,
+    #     savename="footprint_PCA",
+    # )
+
+    PCAfunction(
         X=X,
-        ncomp_per_mod=32,
-        batch_size=4096,
+        ncomp=16,
         out_dir=OUT_DIR,
-        whiten=True,
-        seed=None,
-        umap_neighbors=30,
-        umap_min_dist=0.1,
-        savename="umap_2d",
-    )
+        image_shape=(X.shape[1], X.shape[2], X.shape[3])
+        )
 
