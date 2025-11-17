@@ -24,7 +24,7 @@ class HistViewer:
         
         # Histogram properties to compute
         self.property_names = [
-            'Mean Intensity Ch1', 'Mean Intensity Ch2', 'Mean Intensity Ch3'
+            'Mean Image Intensity', 'Mean Correlation', 'Footprint Size', 'Shot Noise'
         ]
         
         # UI Controls
@@ -58,11 +58,17 @@ class HistViewer:
         
         # Callback for individual sample changes (set by BoxViewer)
         self.on_individual_sample_changed = None
+
+        self.shot_noise = None
         
         # Initialize
         self._open_hdf5()
+        if self.shot_noise is None:
+            self.property_names.remove('Shot Noise')
+            self.property_selector.options = self.property_names
         if self.dataset is not None:
             self._compute_population_histograms()
+
     
     def _open_hdf5(self):
         """Open HDF5 file for reading (same pattern as BoxViewer)"""
@@ -90,6 +96,20 @@ class HistViewer:
             if self.dataset.ndim != 5 or self.dataset.shape[1:] != (3, 5, 20, 20):
                 self.status_text.object = f"**Error:** Unexpected data shape: {self.dataset.shape}"
                 self.dataset = None
+                
+            # Load shot noise if available
+            if 'shot_noise' in self.hdf5_file:
+                shot_noise = self.hdf5_file['shot_noise'][:]
+                if shot_noise.shape[0] == self.dataset.shape[0]:
+                    if self.use_sampling and self.sample_indices is not None:
+                        self.shot_noise = shot_noise[self.sample_indices]
+                    else:
+                        self.shot_noise = shot_noise
+                else:
+                    print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
+                    print("Therefore ignoring shot noise")
+            else:
+                print("No shot noise in hdf5")
                 
         except Exception as e:
             self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
@@ -119,45 +139,15 @@ class HistViewer:
         if sample_data.ndim == 4:  # Single sample
             sample_data = sample_data[np.newaxis, ...]  # Add batch dimension
         
-        batch_size = sample_data.shape[0]
         properties = {}
-        
-        for ch in range(3):
-            channel_data = sample_data[:, ch, :, :, :]
-            
-            # Mean intensity per sample
-            properties[f'Mean Intensity Ch{ch+1}'] = np.mean(channel_data, axis=(1, 2, 3))
-            
-            # # Max intensity per sample  
-            # properties[f'Max Intensity Ch{ch+1}'] = np.max(channel_data, axis=(1, 2, 3))
-            
-            # # Z-centroid (weighted average Z position)
-            # z_weights = np.sum(channel_data, axis=(2, 3))  # Sum over X, Y: (batch_size, 5)
-            # z_positions = np.arange(5)[np.newaxis, :]  # (1, 5)
-            # z_centroids = np.sum(z_weights * z_positions, axis=1) / (np.sum(z_weights, axis=1) + 1e-8)
-            # properties[f'Z-Centroid Ch{ch+1}'] = z_centroids
-            
-            # if ch == 0:  # Only compute spatial properties for first channel to avoid redundancy
-            #     # Center of mass for X and Y (using max projection)
-            #     max_proj = np.max(channel_data, axis=1)  # (batch_size, 20, 20)
-                
-            #     # Create coordinate grids
-            #     y_coords, x_coords = np.meshgrid(np.arange(20), np.arange(20), indexing='ij')
-                
-            #     # Compute center of mass for each sample
-            #     com_x = np.zeros(batch_size)
-            #     com_y = np.zeros(batch_size)
-                
-            #     for i in range(batch_size):
-            #         total_intensity = np.sum(max_proj[i]) + 1e-8
-            #         com_x[i] = np.sum(max_proj[i] * x_coords) / total_intensity
-            #         com_y[i] = np.sum(max_proj[i] * y_coords) / total_intensity
-                
-            #     properties['Center of Mass X Ch1'] = com_x
-            #     properties['Center of Mass Y Ch1'] = com_y
+        properties['Mean Image Intensity'] = np.mean(sample_data[:, 0, :, :, :], axis=(1, 2, 3))
+        properties['Mean Correlation'] = np.mean(sample_data[:, 1, :, :, :], axis=(1, 2, 3))
+        properties['Footprint Size'] = np.sum(sample_data[:, 2, :, :, :] > 0, axis=(1, 2, 3))
+        if self.shot_noise is not None:
+            properties['Shot Noise'] = self.shot_noise[:sample_data.shape[0]]
         
         return properties
-    
+
     def _compute_population_histograms(self):
         """Compute histograms for the entire population (or sample)"""
         if self.dataset is None:
@@ -179,7 +169,7 @@ class HistViewer:
             # Load data in chunks to manage memory
             chunk_size = 1000
             all_properties = {prop: [] for prop in self.property_names}
-            
+
             for i in range(0, len(indices_to_use), chunk_size):
                 chunk_indices = indices_to_use[i:i+chunk_size]
                 chunk_data = self.dataset[chunk_indices]
