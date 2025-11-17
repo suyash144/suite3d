@@ -7,12 +7,11 @@ from bokeh.palettes import Greys256, Blues8
 class BoxViewer:
     """Component for viewing 5D data samples with 3 channels and dual view projections"""
     
-    def __init__(self, hdf5_path, sample_indices=None, use_sampling=False):
-        self.hdf5_path = hdf5_path
+    def __init__(self, dataset, shot_noise=None, sample_indices=None, use_sampling=False):
+        self.dataset = dataset
+        self.shot_noise = shot_noise
         self.sample_indices = sample_indices
         self.use_sampling = use_sampling
-        self.hdf5_file = None
-        self.dataset = None
         self.display_dataset = None  # Subset of dataset to display (if sample_indices provided)
         self.cluster_cache = {}
         self.current_cluster_id = None
@@ -64,51 +63,24 @@ class BoxViewer:
         self.z_slice_slider.param.watch(self._on_z_slice_change, 'value')
         self.y_slice_slider.param.watch(self._on_y_slice_change, 'value')
         self.on_sample_changed = None
-        
-        # Try to open HDF5 file
-        self._open_hdf5()
-    
-    def _open_hdf5(self):
-        """Open HDF5 file for reading"""
-        try:
-            self.hdf5_file = h5py.File(self.hdf5_path, 'r')
-            
-            # Try to find the main dataset
-            if len(self.hdf5_file.keys()) == 1:
-                dataset_key = list(self.hdf5_file.keys())[0]
-                self.dataset = self.hdf5_file[dataset_key]
-                self.status_text.object = f"**Status:** Opened HDF5 dataset '{dataset_key}' with shape {self.dataset.shape}"
+
+        if self.dataset is not None:
+            if self.sample_indices is not None and len(self.sample_indices) > 0:
+                random_sample_idx = np.random.choice(len(self.sample_indices))
+                random_orig_idx = self.sample_indices[random_sample_idx]
+                status_msg = f"Showing random sample {random_orig_idx}"
+                self.display_dataset = self.dataset[np.sort(self.sample_indices)]
             else:
-                # Try common dataset names
-                possible_keys = ['data', 'dataset', 'samples', 'X']
-                for key in possible_keys:
-                    if key in self.hdf5_file:
-                        self.dataset = self.hdf5_file[key]
-                        self.status_text.object = f"**Status:** Using dataset '{key}' with shape {self.dataset.shape}"
-                        break
-                else:
-                    available_keys = list(self.hdf5_file.keys())
-                    self.status_text.object = f"**Error:** Please specify dataset. Available: {available_keys}"
+                n_samples = self.dataset.shape[0]
+                random_orig_idx = np.random.choice(n_samples)
+                status_msg = f"Showing random sample {random_orig_idx}"
+                self.display_dataset = self.dataset
             
-            if self.dataset is not None:
-                if self.sample_indices is not None and len(self.sample_indices) > 0:
-                    random_sample_idx = np.random.choice(len(self.sample_indices))
-                    random_orig_idx = self.sample_indices[random_sample_idx]
-                    status_msg = f"Showing random sample {random_orig_idx}"
-                    self.display_dataset = self.dataset[np.sort(self.sample_indices)]
-                else:
-                    n_samples = self.dataset.shape[0]
-                    random_orig_idx = np.random.choice(n_samples)
-                    status_msg = f"Showing random sample {random_orig_idx}"
-                
-                random_sample = self.dataset[random_orig_idx]
+            random_sample = self.dataset[random_orig_idx]
 
-                self.current_sample = random_sample
-                self._update_plots()
-                self.status_text.object = status_msg
-
-        except Exception as e:
-            self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
+            self.current_sample = random_sample
+            self._update_plots()
+            self.status_text.object = status_msg
     
     def _create_empty_plot(self, title, small=False):
         """Create empty bokeh plot for displaying images"""

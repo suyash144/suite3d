@@ -9,12 +9,11 @@ from bokeh.layouts import gridplot
 class HistViewer:
     """Component for viewing histograms of data properties with population, cluster, and individual sample comparisons"""
     
-    def __init__(self, hdf5_path, sample_indices=None, use_sampling=False):
-        self.hdf5_path = hdf5_path
+    def __init__(self, dataset, shot_noise=None, sample_indices=None, use_sampling=False):
+        self.dataset = dataset
+        self.shot_noise = shot_noise
         self.sample_indices = sample_indices
         self.use_sampling = use_sampling
-        self.hdf5_file = None
-        self.dataset = None
         
         # Cache management
         self.population_cache = None  # Population histograms
@@ -59,60 +58,12 @@ class HistViewer:
         # Callback for individual sample changes (set by BoxViewer)
         self.on_individual_sample_changed = None
 
-        self.shot_noise = None
-        
         # Initialize
-        self._open_hdf5()
         if self.shot_noise is None:
             self.property_names.remove('Shot Noise')
             self.property_selector.options = self.property_names
         if self.dataset is not None:
             self._compute_population_histograms()
-
-    
-    def _open_hdf5(self):
-        """Open HDF5 file for reading (same pattern as BoxViewer)"""
-        try:
-            self.hdf5_file = h5py.File(self.hdf5_path, 'r')
-            
-            # Find the main dataset (same logic as BoxViewer)
-            if len(self.hdf5_file.keys()) == 1:
-                dataset_key = list(self.hdf5_file.keys())[0]
-                self.dataset = self.hdf5_file[dataset_key]
-                self.status_text.object = f"**Status:** Opened HDF5 dataset '{dataset_key}'"
-            else:
-                possible_keys = ['data', 'dataset', 'samples', 'X']
-                for key in possible_keys:
-                    if key in self.hdf5_file:
-                        self.dataset = self.hdf5_file[key]
-                        self.status_text.object = f"**Status:** Using dataset '{key}'"
-                        break
-                else:
-                    available_keys = list(self.hdf5_file.keys())
-                    self.status_text.object = f"**Error:** Please specify dataset. Available: {available_keys}"
-                    return
-            
-            # Verify expected shape
-            if self.dataset.ndim != 5 or self.dataset.shape[1:] != (3, 5, 20, 20):
-                self.status_text.object = f"**Error:** Unexpected data shape: {self.dataset.shape}"
-                self.dataset = None
-                
-            # Load shot noise if available
-            if 'shot_noise' in self.hdf5_file:
-                shot_noise = self.hdf5_file['shot_noise'][:]
-                if shot_noise.shape[0] == self.dataset.shape[0]:
-                    if self.use_sampling and self.sample_indices is not None:
-                        self.shot_noise = shot_noise[self.sample_indices]
-                    else:
-                        self.shot_noise = shot_noise
-                else:
-                    print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
-                    print("Therefore ignoring shot noise")
-            else:
-                print("No shot noise in hdf5")
-                
-        except Exception as e:
-            self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
     
     def _create_empty_plot(self):
         """Create empty bokeh plot for histograms"""

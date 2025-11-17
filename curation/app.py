@@ -10,6 +10,7 @@ from umap_visualiser import UMAPVisualiser
 from box_viewer import BoxViewer
 from hist_viewer import HistViewer
 from sklearn.linear_model import SGDClassifier
+import h5py
 
 pn.extension()
 
@@ -198,21 +199,66 @@ class AppOrchestrator:
     
     def create_components(self):
         """Create and initialize the visualization components"""
-        
+        self._open_hdf5()
         
         if self.display_data is not None:
+
+            # For UMAP visualiser, we just pass in the sampled (or not) data - no need here for the full dataset
             self.umap_visualiser = UMAPVisualiser(self.display_data)
             # Subscribe to selection events
             self.umap_visualiser.on_cluster_selected = self.on_cluster_selected
 
-            # add box viewer
-            self.box_viewer = BoxViewer(self.hdf5_path, self.sample_indices, self.use_sampling)
-
-            # add hist viewer
-            self.hist_viewer = HistViewer(self.hdf5_path, self.sample_indices, self.use_sampling)
+            # For box and hist viewers, we need the full dataset (self.dataset), so we pass this in along with the sampling info
+            # We also pass in shot noise if available - this is already sampled
+            self.box_viewer = BoxViewer(self.dataset, self.shot_noise, self.sample_indices, self.use_sampling)
+            self.hist_viewer = HistViewer(self.dataset, self.shot_noise, self.sample_indices, self.use_sampling)
 
             if self.box_viewer and self.hist_viewer:
                 self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
+
+    def _open_hdf5(self):
+        """Open HDF5 file for reading (same pattern as BoxViewer)"""
+        try:
+            self.hdf5_file = h5py.File(self.hdf5_path, 'r')
+            
+            # Find the main dataset (same logic as BoxViewer)
+            if len(self.hdf5_file.keys()) == 1:
+                dataset_key = list(self.hdf5_file.keys())[0]
+                self.dataset = self.hdf5_file[dataset_key]
+                self.status_text.object = f"**Status:** Opened HDF5 dataset '{dataset_key}'"
+            else:
+                possible_keys = ['data', 'dataset', 'samples', 'X']
+                for key in possible_keys:
+                    if key in self.hdf5_file:
+                        self.dataset = self.hdf5_file[key]
+                        self.status_text.object = f"**Status:** Using dataset '{key}'"
+                        break
+                else:
+                    available_keys = list(self.hdf5_file.keys())
+                    self.status_text.object = f"**Error:** Please specify dataset. Available: {available_keys}"
+                    return
+            
+            # Verify expected shape
+            if self.dataset.ndim != 5 or self.dataset.shape[1:] != (3, 5, 20, 20):
+                self.status_text.object = f"**Error:** Unexpected data shape: {self.dataset.shape}"
+                self.dataset = None
+
+            # Load shot noise if available
+            if 'shot_noise' in self.hdf5_file:
+                shot_noise = self.hdf5_file['shot_noise'][:]
+                if shot_noise.shape[0] == self.dataset.shape[0]:
+                    if self.use_sampling and self.sample_indices is not None:
+                        self.shot_noise = shot_noise[self.sample_indices]
+                    else:
+                        self.shot_noise = shot_noise
+                else:
+                    print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
+                    print("Therefore ignoring shot noise")
+            else:
+                print("No shot noise in hdf5")
+                
+        except Exception as e:
+            self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
     
     def on_cluster_selected(self, cluster_id, tapped_idx):
         """Handle cluster selection from UMAP visualiser"""
@@ -449,6 +495,9 @@ def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
 app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\ses1_fprint_UMAP.npy",  
                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\ses1_fprint_PCA.npy", 
                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+# app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_UMAP_unstd.npy",  
+#                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_PCA_unstd.npy", 
+#                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 app.servable()
 
 if __name__ == "__main__":
