@@ -9,9 +9,10 @@ from bokeh.layouts import gridplot
 class HistViewer:
     """Component for viewing histograms of data properties with population, cluster, and individual sample comparisons"""
     
-    def __init__(self, dataset, shot_noise=None, sample_indices=None, use_sampling=False):
+    def __init__(self, dataset, shot_noise=None, footprint_size=None, sample_indices=None, use_sampling=False):
         self.dataset = dataset
         self.shot_noise = shot_noise
+        self.footprint_size = footprint_size
         self.sample_indices = sample_indices
         self.use_sampling = use_sampling
         
@@ -62,6 +63,9 @@ class HistViewer:
         if self.shot_noise is None:
             self.property_names.remove('Shot Noise')
             self.property_selector.options = self.property_names
+        if self.footprint_size is None:
+            self.property_names.remove('Footprint Size')
+            self.property_selector.options = self.property_names
         if self.dataset is not None:
             self._compute_population_histograms()
     
@@ -78,24 +82,28 @@ class HistViewer:
         plot.yaxis.ticker.desired_num_ticks = 0
         return plot
     
-    def _compute_sample_properties(self, sample_data):
+    def _compute_sample_properties(self, sample_indices):
         """Compute all histogram properties for a single sample or batch of samples
         
         Args:
-            sample_data: Either (3, 5, 20, 20) for single sample or (N, 3, 5, 20, 20) for batch
+            sample_data: List of indices to use to get the sample data (indexing into self.dataset, the full unsampled dataset)
             
         Returns:
             dict with property_name -> value(s)
         """
-        if sample_data.ndim == 4:  # Single sample
+        if len(sample_indices) == 1:                                           # Single sample
+            sample_data = self.dataset[sample_indices[0]]
             sample_data = sample_data[np.newaxis, ...]  # Add batch dimension
+        else:
+            sample_data = self.dataset[sample_indices]            
         
         properties = {}
         properties['Mean Image Intensity'] = np.mean(sample_data[:, 0, :, :, :], axis=(1, 2, 3))
         properties['Mean Correlation'] = np.mean(sample_data[:, 1, :, :, :], axis=(1, 2, 3))
-        properties['Footprint Size'] = np.sum(sample_data[:, 2, :, :, :] > 0, axis=(1, 2, 3))
         if self.shot_noise is not None:
-            properties['Shot Noise'] = self.shot_noise[:sample_data.shape[0]]
+            properties['Shot Noise'] = self.shot_noise[sample_indices]
+        if self.footprint_size is not None:
+            properties['Footprint Size'] = self.footprint_size[sample_indices]
         
         return properties
 
@@ -118,13 +126,12 @@ class HistViewer:
                 sampling_msg = f" (random sample of {n_samples:,})"
             
             # Load data in chunks to manage memory
-            chunk_size = 1000
+            chunk_size = 5000
             all_properties = {prop: [] for prop in self.property_names}
 
             for i in range(0, len(indices_to_use), chunk_size):
                 chunk_indices = indices_to_use[i:i+chunk_size]
-                chunk_data = self.dataset[chunk_indices]
-                chunk_properties = self._compute_sample_properties(chunk_data)
+                chunk_properties = self._compute_sample_properties(chunk_indices)
                 
                 for prop_name in self.property_names:
                     all_properties[prop_name].extend(chunk_properties[prop_name])
@@ -175,17 +182,11 @@ class HistViewer:
             
             self.status_text.object = f"**Status:** Computing histograms for cluster {cluster_id} ({len(cluster_original_indices)} samples)..."
             
-            # Sort indices for HDF5 access, then unsort results (same pattern as BoxViewer)
-            sort_order = np.argsort(cluster_original_indices)
-            sorted_indices = cluster_original_indices[sort_order]
-            cluster_samples_sorted = self.dataset[sorted_indices]
-            
-            # Restore original order
-            unsort_order = np.argsort(sort_order)
-            cluster_samples = cluster_samples_sorted[unsort_order]
+            # Sort indices for HDF5 access - we don't care about preserving order for histograms
+            sorted_indices = np.sort(cluster_original_indices)
             
             # Compute properties
-            cluster_properties = self._compute_sample_properties(cluster_samples)
+            cluster_properties = self._compute_sample_properties(sorted_indices)
             
             # Compute histograms using same bins as population, normalized to PDFs
             cluster_hist_data = {}

@@ -1,21 +1,19 @@
 import numpy as np
 import panel as pn
-import h5py
 from bokeh.plotting import figure
 from bokeh.palettes import Greys256, Blues8
 
 class BoxViewer:
     """Component for viewing 5D data samples with 3 channels and dual view projections"""
     
-    def __init__(self, dataset, shot_noise=None, sample_indices=None, use_sampling=False):
+    def __init__(self, dataset, sample_indices=None, use_sampling=False):
         self.dataset = dataset
-        self.shot_noise = shot_noise
         self.sample_indices = sample_indices
         self.use_sampling = use_sampling
         self.display_dataset = None  # Subset of dataset to display (if sample_indices provided)
         self.cluster_cache = {}
         self.current_cluster_id = None
-        self.current_sample = None  # Current (3, 5, 20, 20) array to display
+        self.current_sample = None  # Index in original (full) dataset of the datapoint to display. Will be a list, with length > 1 only if Mean option is selected
         
         # Keep track of image renderers to avoid recreation
         self.xy_image_renderers = [None, None, None]
@@ -75,10 +73,8 @@ class BoxViewer:
                 random_orig_idx = np.random.choice(n_samples)
                 status_msg = f"Showing random sample {random_orig_idx}"
                 self.display_dataset = self.dataset
-            
-            random_sample = self.dataset[random_orig_idx]
-
-            self.current_sample = random_sample
+        
+            self.current_sample = [random_orig_idx]
             self._update_plots()
             self.status_text.object = status_msg
     
@@ -107,6 +103,11 @@ class BoxViewer:
         if cluster_id in self.cluster_cache:
             self.current_cluster_id = cluster_id
             self.cluster_cache[cluster_id]["selected"] = self.display_dataset[tapped_idx]
+            if self.sample_indices is not None:
+                original_idx = self.sample_indices[tapped_idx]
+                self.cluster_cache[cluster_id]["selected"] = [original_idx]
+            else:
+                self.cluster_cache[cluster_id]["selected"] = [tapped_idx]
             self._update_current_sample()
             self.status_text.object = f"**Status:** Loaded cached cluster {cluster_id}"
             return
@@ -138,21 +139,24 @@ class BoxViewer:
                 return
             
             # Compute statistics
-            mean_sample = np.mean(cluster_samples, axis=0)  # (3, 5, 20, 20)
             cluster_umap = cluster_data[['umap_x', 'umap_y']].values
             com = np.mean(cluster_umap, axis=0)                 # center of mass of UMAP cluster
             distances = np.linalg.norm(cluster_umap - com, axis=1)
             closest_idx = np.argmin(distances)
-            median_sample = cluster_samples[closest_idx]        # (3, 5, 20, 20)
+            median_idx = cluster_original_indices[closest_idx]
+            # median_sample = cluster_samples[closest_idx]        # (3, 5, 20, 20)
             # random_idx = np.random.choice(len(cluster_original_indices), size=min(10, len(cluster_original_indices)), replace=False)
             # random_sample = cluster_samples[random_idx]  # (3, 5, 20, 20)
-            selected_sample = self.display_dataset[tapped_idx]
+            if self.sample_indices is not None:
+                selected_idx = self.sample_indices[tapped_idx]
+            else:
+                selected_idx = tapped_idx
             
             # Cache results
             self.cluster_cache[cluster_id] = {
-                "selected": selected_sample,
-                "mean": mean_sample,
-                "median": median_sample, 
+                "selected": [selected_idx],
+                "mean": sorted_indices,
+                "median": [median_idx], 
             }
             
             self.current_cluster_id = cluster_id
@@ -204,11 +208,15 @@ class BoxViewer:
         """Update all 6 plots based on current sample and settings"""
         if self.current_sample is None:
             return
+        if len(self.current_sample) > 1:
+            sample_volume = np.mean(self.dataset[self.current_sample], axis=0)
+        else:
+            sample_volume = self.dataset[self.current_sample[0]]
         
         projection_mode = self.projection_selector.value
         
         for channel in range(3):
-            channel_volume = self.current_sample[channel]  # (5, 20, 20) - Z, Y, X
+            channel_volume = sample_volume[channel]  # (5, 20, 20) - Z, Y, X
             
             # Generate XY and XZ views
             if projection_mode == "Max Projection":

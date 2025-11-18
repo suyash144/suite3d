@@ -28,6 +28,8 @@ class AppOrchestrator:
         self.umap_embedding = None
         self.nn_features = None
         self.full_data = None
+        self.shot_noise = None
+        self.footprint_size = None
         self.display_data = None
         self.classifications = None
         self.sample_indices = None
@@ -81,9 +83,9 @@ class AppOrchestrator:
 
         self.view_toggle = pn.widgets.ToggleGroup(
             name='View Mode', 
-            options=['Cluster', 'Probability'],
+            options=['Clus', 'Prob', 'SNR', 'Size'],
             behavior='radio',
-            value='Cluster', 
+            value='Clus', 
             button_type='primary',
             button_style='outline',
             width=200
@@ -143,6 +145,7 @@ class AppOrchestrator:
             if n_points > self.sample_size:
                 self.use_sampling = True
                 self.sample_indices = np.random.choice(n_points, self.sample_size, replace=False)
+                self.sample_indices.sort()
                 self.status_text.object = f"**Status:** Large dataset ({n_points:,} points) - sampling enabled"
             else:
                 self.use_sampling = False
@@ -204,14 +207,13 @@ class AppOrchestrator:
         if self.display_data is not None:
 
             # For UMAP visualiser, we just pass in the sampled (or not) data - no need here for the full dataset
-            self.umap_visualiser = UMAPVisualiser(self.display_data)
+            self.umap_visualiser = UMAPVisualiser(self.display_data, self.shot_noise[self.sample_indices], self.footprint_size[self.sample_indices])
             # Subscribe to selection events
             self.umap_visualiser.on_cluster_selected = self.on_cluster_selected
 
             # For box and hist viewers, we need the full dataset (self.dataset), so we pass this in along with the sampling info
-            # We also pass in shot noise if available - this is already sampled
-            self.box_viewer = BoxViewer(self.dataset, self.shot_noise, self.sample_indices, self.use_sampling)
-            self.hist_viewer = HistViewer(self.dataset, self.shot_noise, self.sample_indices, self.use_sampling)
+            self.box_viewer = BoxViewer(self.dataset, self.sample_indices, self.use_sampling)
+            self.hist_viewer = HistViewer(self.dataset, self.shot_noise, self.footprint_size, self.sample_indices, self.use_sampling)
 
             if self.box_viewer and self.hist_viewer:
                 self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
@@ -247,16 +249,16 @@ class AppOrchestrator:
             if 'shot_noise' in self.hdf5_file:
                 shot_noise = self.hdf5_file['shot_noise'][:]
                 if shot_noise.shape[0] == self.dataset.shape[0]:
-                    if self.use_sampling and self.sample_indices is not None:
-                        self.shot_noise = shot_noise[self.sample_indices]
-                    else:
-                        self.shot_noise = shot_noise
+                    self.shot_noise = shot_noise
                 else:
                     print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
                     print("Therefore ignoring shot noise")
             else:
                 print("No shot noise in hdf5")
-                
+
+            # compute footprint sizes
+            self.footprint_size = np.sum(self.dataset[:, 2, :, :, :] > 0, axis=(1,2,3))
+
         except Exception as e:
             self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
     
