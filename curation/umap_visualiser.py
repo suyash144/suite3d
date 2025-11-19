@@ -2,25 +2,27 @@ import numpy as np
 import panel as pn
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, HoverTool, TapTool, ColorBar, LinearColorMapper
-from bokeh.palettes import Category20, Reds256
+from bokeh.palettes import Category20, Reds256, Inferno256, Viridis256
 from bokeh.colors import RGB
 
 class UMAPVisualiser:
     """Pure UMAP visualisation component - handles only plot rendering and interactions"""
     
-    def __init__(self, data=None):
+    def __init__(self, data=None, shot_noise=None, footprint_size=None):
         """
         Initialize with data DataFrame containing: umap_x, umap_y, cluster, classification
         """
         self.data = data
+        self.shot_noise = shot_noise
+        self.footprint_size = footprint_size
         self.probs = None
         self.source = None
         self.plot = None
         self.scatter = None
         self.cluster_colors = Category20[20]
-        self.view_mode = 'cluster'
+        self.view_mode = 'clus'
         self.last_clicked_cluster = None
-        self.color_mapper = LinearColorMapper(palette=Reds256[::-1], low=0, high=1)
+        self.prob_mapper = LinearColorMapper(palette=Reds256[::-1], low=0, high=1)
         self.color_bar = None
         
         # Callback for cluster selection - set by orchestrator
@@ -44,10 +46,10 @@ class UMAPVisualiser:
             self.update_plot()
     
     def set_view_mode(self, event):
-        """Set view mode: 'cluster' or 'probability'"""
+        """Set view mode: 'clus', 'prob', 'snr', or 'size'"""
         mode = event.new.lower()
-        if mode not in ['cluster', 'probability']:
-            raise ValueError("View mode must be 'cluster' or 'probability'.")
+        if mode not in ['clus', 'prob', 'snr', 'size']:
+            raise ValueError("View mode must be 'clus', 'prob', 'snr', or 'size'.")
         
         self.view_mode = mode
         self.update_plot()
@@ -55,7 +57,7 @@ class UMAPVisualiser:
     def update_data(self, new_data):
         """Update with new data and re-render"""
         self.data = new_data
-        self.view_mode = 'cluster'  # Reset to cluster mode on data update
+        self.view_mode = 'clus'  # Reset to cluster mode on data update
         self.update_plot()
     
     def get_plot_pane(self):
@@ -134,11 +136,27 @@ class UMAPVisualiser:
         not_cell_mask = classifications == 'not_cell'
         unclassified_mask = ~(cell_mask | not_cell_mask)
         
-        if self.view_mode == "probability" and self.probs is not None:
+        if self.view_mode == "prob" and self.probs is not None:
             # For all ROIs, use probabilities to set colors
             for i in range(n_points):
                 prob = self.probs[i]
                 colors[i] = RGB(r=255, g=int(255 * (1 - prob)), b=int(255 * (1 - prob)))
+        elif self.view_mode == "snr":
+            # For all ROIs, use shot noise to set colors
+            min_noise = np.min(self.shot_noise)
+            max_noise = np.max(self.shot_noise)
+            norm_noise = (self.shot_noise - min_noise) / (max_noise - min_noise + 1e-8)
+            for i in range(n_points):
+                noise_val = norm_noise[i]
+                colors[i] = Inferno256[int(noise_val * 255)]
+        elif self.view_mode == "size":
+            # For all ROIs, use footprint size to set colors
+            min_size = np.min(self.footprint_size)
+            max_size = np.max(self.footprint_size)
+            norm_size = (self.footprint_size - min_size) / (max_size - min_size + 1e-8)
+            for i in range(n_points):
+                size_val = norm_size[i]
+                colors[i] = Viridis256[int(size_val * 255)]
         else:
             colors[cell_mask] = 'black'
             colors[not_cell_mask] = 'gray'
@@ -183,26 +201,53 @@ class UMAPVisualiser:
             self.plot.toolbar.tools = [tool for tool in self.plot.toolbar.tools if not isinstance(tool, HoverTool)]
             self.plot.add_tools(hover)
         
-        # Create optimized scatter plot
+        # Create scatter plot
         self.scatter = self.plot.scatter(
             'x', 'y', 
             source=self.source,
-            size=3,  # Smaller points for performance
+            size=3,
             color='colors',
             alpha='alphas',
-            line_color=None,  # Remove line borders for performance
             selection_color="red",
             nonselection_alpha=0.1
         )
 
-        if self.view_mode == 'probability' and self.probs is not None and self.color_bar is None:
-            self.color_bar = ColorBar(
-                color_mapper=self.color_mapper,
-                label_standoff=12,
-                border_line_color=None,
-                location=(0, 0),
-                title="Probability"
-            )
+        if self.view_mode == 'clus' and self.color_bar is not None and self.color_bar in self.plot.right:
+            # if in cluster mode, remove color bar if present
+            self.plot.right.remove(self.color_bar)
+        elif self.view_mode == 'clus':
+            self.color_bar = None
+        else:
+            if self.color_bar is not None and self.color_bar in self.plot.right:
+                self.plot.right.remove(self.color_bar)
+
+            if self.view_mode == 'prob':
+                self.color_bar = ColorBar(
+                    color_mapper=self.prob_mapper,
+                    label_standoff=12,
+                    border_line_color=None,
+                    location=(0, 0),
+                    title="Probability"
+                )
+
+            elif self.view_mode == 'snr':
+                self.color_bar = ColorBar(
+                    color_mapper=LinearColorMapper(palette=Inferno256, low=np.min(self.shot_noise), high=np.max(self.shot_noise)),
+                    label_standoff=12,
+                    border_line_color=None,
+                    location=(0, 0),
+                    title="Shot Noise"
+                )
+
+            elif self.view_mode == 'size':
+                self.color_bar = ColorBar(
+                    color_mapper=LinearColorMapper(palette=Viridis256, low=np.min(self.footprint_size), high=np.max(self.footprint_size)),
+                    label_standoff=12,
+                    border_line_color=None,
+                    location=(0, 0),
+                    title="Footprint Size"
+                )
+
             self.plot.add_layout(self.color_bar, 'right')
         
         # Set up tap callback for cluster mode

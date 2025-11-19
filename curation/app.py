@@ -81,16 +81,13 @@ class AppOrchestrator:
             width=200
         )
 
-        self.view_toggle = pn.widgets.ToggleGroup(
+        self.view_toggle = pn.widgets.Select(
             name='View Mode', 
-            options=['Clus', 'Prob', 'SNR', 'Size'],
-            behavior='radio',
+            options={'Cluster': 'Clus', 'Probability': 'Prob', 'Shot Noise': 'SNR', 'Footprint Size': 'Size'},
+            disabled_options=['Prob'],
             value='Clus', 
-            button_type='primary',
-            button_style='outline',
             width=200
         )
-        self.view_toggle.disabled = True
         
         # Status text
         self.status_text = pn.pane.Markdown(f"**Status:** Loading {umap_file_path}...", width=200)
@@ -105,6 +102,9 @@ class AppOrchestrator:
         # Initialize
         self.load_data()
         self.create_components()
+
+        if self.shot_noise is None:
+            self.view_toggle.disabled_options.append('SNR')
 
         # Callback for view toggle (needs to be sent to umap visualiser)
         self.view_toggle.param.watch(self.umap_visualiser.set_view_mode, 'value')
@@ -249,7 +249,7 @@ class AppOrchestrator:
             if 'shot_noise' in self.hdf5_file:
                 shot_noise = self.hdf5_file['shot_noise'][:]
                 if shot_noise.shape[0] == self.dataset.shape[0]:
-                    self.shot_noise = shot_noise
+                    self.shot_noise = np.clip(shot_noise, 0, 1)
                 else:
                     print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
                     print("Therefore ignoring shot noise")
@@ -357,7 +357,8 @@ class AppOrchestrator:
             self.cell_probs = self.linear_model.predict_proba(self.nn_features[self.sample_indices])[:, class_idx]
             self.umap_visualiser.set_probs(self.cell_probs)
 
-            self.view_toggle.disabled = False
+            if 'Prob' in self.view_toggle.disabled_options:
+                self.view_toggle.disabled_options.remove('Prob')
 
         self.status_text.object = f"**Status:** Classified cluster {self.selected_cluster} ({cluster_size:,} points) as '{classification_type}' | Total - Cells: {cell_count:,}, Not cells: {not_cell_count:,}"
         
@@ -375,8 +376,9 @@ class AppOrchestrator:
         self.labelled_features_idx = []
         self.labels = []
         self.cell_probs = None
-        self.view_toggle.value = 'Cluster'
-        self.view_toggle.disabled = True
+        self.view_toggle.value = 'Clus'
+        if 'Prob' not in self.view_toggle.disabled_options:
+            self.view_toggle.disabled_options.append('Prob')
         
         if self.umap_visualiser:
             self.umap_visualiser.update_data(self.display_data)
@@ -494,8 +496,8 @@ def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
     orchestrator = AppOrchestrator(umap_file, nn_features_path=nn_features_path, hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\ses1_fprint_UMAP.npy",  
-                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\ses1_fprint_PCA.npy", 
+app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_UMAP.npy",  
+                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_PCA.npy", 
                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
 # app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_UMAP_unstd.npy",  
 #                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_PCA_unstd.npy", 

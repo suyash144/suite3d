@@ -31,21 +31,6 @@ def _iter_batches_permod(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.nd
         yield x0, x1, x2
 
 
-def _iter_batches(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Yield batches: returns x shaped (B,2000)."""
-    N = X.shape[0]
-    for start in range(0, N, batch_size):
-        stop = min(N, start + batch_size)
-        xb = X[start:stop].astype(np.float32)  # (B,3,5,20,20)
-        
-        # Split modalities and flatten last 3 dims
-        x = xb[:].reshape(xb.shape[0], -1)  # (B,2000)
-        
-        x[~np.isfinite(x)] = 0.0
-            
-        yield x
-
-
 def run_permod_pca_umap(
     X: np.ndarray,
     ncomp_per_mod: int = 32,
@@ -185,90 +170,6 @@ def run_permod_pca_umap(
     # Save results
     np.save(os.path.join(out_dir, f"{savename}.npy"), Y.astype(np.float32))
     save_scatter(os.path.join(out_dir, f"{savename}.png"), Y)
-
-    print(f"Pipeline complete. Results saved to: {out_dir}")
-    return out_dir
-
-
-def single_modality(
-    X: np.ndarray,
-    ncomp: int = 32,
-    batch_size: int = 4096,
-    out_dir: str = "pca_permod_umap",
-    whiten: bool = False,
-    seed: int = 0,
-    umap_neighbors: int = 30,
-    umap_min_dist: float = 0.1,
-    savename: str = "umap_2d",
-    variance_threshold = 1e-8
-) -> str:
-    """
-    Per-modality IncrementalPCA, concatenate embeddings, then UMAP to 2D.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-
-    N = X.shape[0]
-
-    effective_ncomp = ncomp
-    sample_size = min(1000, N)
-    
-    # Initialize IncrementalPCA with appropriate number of components
-    ipca = IncrementalPCA(
-        n_components=effective_ncomp, 
-        batch_size=min(batch_size, sample_size)
-    )
-
-    # Calculate total embedding dimension
-    K = ipca.n_components
-
-    # Pass 2: fit IncrementalPCA per modality
-    print("Fitting PCA models...")
-    for x in _iter_batches(X, batch_size):
-        xs_filtered = []
-        x_filtered = x
-        xs_filtered.append(x_filtered)
-        ipca.partial_fit(x_filtered)
-
-    # Pass 3: transform and concatenate
-    print("Transforming data...")
-    emb_path = os.path.join(out_dir, "embeddings_permod.npy")
-    Z = np.lib.format.open_memmap(emb_path, mode="w+", dtype=np.float32, shape=(N, K))
-
-    i = 0
-    
-    for x in _iter_batches(X, batch_size):
-        
-        # PCA transform
-        z = ipca.transform(x)
-        
-        if whiten:
-            explained_var = ipca.explained_variance_
-            # Add small epsilon to prevent division by zero
-            z = z / np.sqrt(np.maximum(explained_var, 1e-12))
-            
-        Zb = z.astype(np.float32)
-        
-        # Store batch
-        b = Zb.shape[0]
-        Z[i:i+b] = Zb
-        i += b
-
-    np.save(os.path.join(out_dir, "pca_embeddings.npy"), Z)
-
-    print("Running UMAP...")
-    umap_model = UMAP(
-        n_neighbors=umap_neighbors,
-        min_dist=umap_min_dist,
-        metric="euclidean",
-        random_state=seed,
-    )
-
-    # Convert memmap to array for UMAP
-    Z_array = np.array(Z)
-    Y = umap_model.fit_transform(Z_array)
-    
-    np.save(os.path.join(out_dir, f"{savename}.npy"), Y.astype(np.float32))
-    # save_scatter(os.path.join(out_dir, f"{savename}.png"), Y)
 
     print(f"Pipeline complete. Results saved to: {out_dir}")
     return out_dir
@@ -538,7 +439,7 @@ if __name__ == "__main__":
     OUT_DIR = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output"
 
     with h5py.File(H5_PATH, 'r') as f:
-        X = f["data"][:32848, 2, :, :, :]
+        X = f["data"][:, 2, :, :, :]
     
     # run_permod_pca_umap(
     #     X=X,
@@ -550,18 +451,6 @@ if __name__ == "__main__":
     #     umap_neighbors=30,
     #     umap_min_dist=0.1,
     #     savename="umap_2d",
-    # )
-
-    # single_modality(
-    #     X=X,
-    #     ncomp=16,
-    #     batch_size=8192,
-    #     out_dir=OUT_DIR,
-    #     whiten=False,
-    #     seed=None,
-    #     umap_neighbors=30,
-    #     umap_min_dist=0.1,
-    #     savename="footprint_PCA",
     # )
 
     PCAfunction(
