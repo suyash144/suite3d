@@ -1,4 +1,4 @@
-import os
+import os, sys
 os.environ["OMP_NUM_THREADS"] = "4"
 import numpy as np
 import pandas as pd
@@ -6,6 +6,7 @@ import panel as pn
 from sklearn.cluster import KMeans
 import json
 from pathlib import Path
+sys.path.insert(0, 'curation')
 from umap_visualiser import UMAPVisualiser
 from box_viewer import BoxViewer
 from hist_viewer import HistViewer
@@ -496,13 +497,14 @@ def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
     orchestrator = AppOrchestrator(umap_file, nn_features_path=nn_features_path, hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
-app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_UMAP.npy",  
-                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_PCA.npy", 
-                r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
-# app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_UMAP_unstd.npy",  
-#                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\footprint_PCA_unstd.npy", 
-#                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
-app.servable()
-
 if __name__ == "__main__":
+
+    # app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\AE16_umap.npy",  
+    #                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\AE16_features.npy", 
+    #                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+    app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_UMAP.npy",  
+                    r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_PCA.npy", 
+                    r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+    app.servable()
+
     app.show(port=5007)

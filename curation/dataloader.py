@@ -4,7 +4,9 @@ import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
-import os
+import os, sys
+sys.path.insert(0, os.getcwd())
+from suite3d import quality_metrics
 
 
 class Suite3DProcessor:
@@ -258,6 +260,8 @@ class Suite3DProcessor:
         
         info = session_data['info']
         stats = session_data['stats']
+        fnpy = session_data['F']
+        shot = quality_metrics.shot_noise_pct(fnpy, 4)
         
         # Get mean image and correlation map
         if 'mean_img' not in info:
@@ -336,6 +340,9 @@ class Suite3DProcessor:
         edge_file = session_path / "edge_cells.npy"
         np.save(edge_file, edge_cells)
 
+        shot_file = session_path / "shot_noise.npy"
+        np.save(shot_file, shot)
+
         patches_file = self.output_dir / f"{session_name}_patches.npy"
         info_file = self.output_dir / f"{session_name}_info.npy"
         
@@ -344,7 +351,7 @@ class Suite3DProcessor:
         np.save(info_file, session_info)
 
         # Force garbage collection to free memory
-        del cell_patches, mean_img, corrmap, session_data
+        del cell_patches, mean_img, corrmap, session_data, shot
         gc.collect()
         
         return session_info
@@ -418,6 +425,8 @@ class Suite3DProcessor:
         combined_patches = np.zeros((total_cells, self.nchannel, self.nbz, self.nby, self.nbx), 
                                    dtype=np.float32)
         
+        all_shot = []
+        
         # Load and concatenate each session
         current_idx = 0
         for session_info in session_info_list:
@@ -443,7 +452,14 @@ class Suite3DProcessor:
                 gc.collect()
             else:
                 print(f"Warning: {patches_file} not found")
-        
+
+            shot_file = self.output_dir.parent / "shot_noise.npy"
+            all_shot.append(np.load(shot_file))    
+
+        all_shot = np.concatenate(all_shot)
+        combined_shot_file = self.output_dir / "all_sessions_shot_noise.npy"
+        np.save(combined_shot_file, all_shot)
+
         # Save combined dataset
         combined_patches_file = self.output_dir / "all_sessions_patches.npy"
         print(f"Saving combined patches to {combined_patches_file}")
@@ -521,22 +537,19 @@ def main(data_directory: str = None, output_directory: str = None):
     )
     
     # Process all sessions
-    try:
-        processor.run_full_pipeline(create_combined=True)
-        
-    except Exception as e:
-        print(f"Error during processing: {e}")
-        import traceback
-        traceback.print_exc()
+    processor.run_full_pipeline(create_combined=True)
 
     # Now create H5 dataset for curation
     data = np.load(os.path.join(output_directory, "all_sessions_patches.npy"), allow_pickle=True)
+    shot = np.load(os.path.join(output_directory, "all_sessions_shot_noise.npy"), allow_pickle=True)
     h5_path = os.path.join(output_directory, "dataset.h5")
     with h5py.File(h5_path, 'w') as hf:
         hf.create_dataset("data",  data=data)
+        hf.create_dataset("shot_noise",  data=shot)
     
     # Now the npy file can be safely deleted
     os.remove(os.path.join(output_directory, "all_sessions_patches.npy"))
+    os.remove(os.path.join(output_directory, "all_sessions_shot_noise.npy"))
     print(f"H5 dataset created at {h5_path}")
 
 

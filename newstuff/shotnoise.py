@@ -66,15 +66,16 @@ if __name__ == "__main__":
 
     for session in os.listdir(raw_root):
         session_path = os.path.join(raw_root, session)
-        if not os.path.isdir(session_path):
-            continue
         if not os.path.exists(os.path.join(session_path, "shot_noise.npy")):
             continue
 
         shot = np.load(os.path.join(session_path, "shot_noise.npy"))
+        print(f"Session: {session}, Shot Noise Shape: {shot.shape}")
         all_shot.extend(shot)
+
+    print(len(all_shot))
     
     dataset_path = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
     with h5py.File(dataset_path, 'r+') as f:
-        f['shot_noise'][:] = np.array(all_shot)
+        f.create_dataset('shot_noise', data=np.array(all_shot))
 
