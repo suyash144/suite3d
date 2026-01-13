@@ -1,8 +1,7 @@
-import numpy as n 
 import os
+os.environ["OMP_NUM_THREADS"] = "6"
 import sys
 from pathlib import Path
-
 
 import panel as pn
 

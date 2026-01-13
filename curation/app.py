@@ -1,11 +1,10 @@
 import os, sys
-os.environ["OMP_NUM_THREADS"] = "4"
 import numpy as np
 import pandas as pd
 import panel as pn
 from sklearn.cluster import KMeans
 import json
-from pathlib import Path
+from collections import OrderedDict
 sys.path.insert(0, 'curation')
 from umap_visualiser import UMAPVisualiser
 from box_viewer import BoxViewer
@@ -37,6 +36,8 @@ class AppOrchestrator:
         self.cell_probs = None
         self.labelled_features_idx = []
         self.labels = []
+        self.available_features = OrderedDict()
+        self.curation_features_to_use = []
         
         # Components
         self.umap_visualiser = None
@@ -120,6 +121,7 @@ class AppOrchestrator:
             
             # Load UMAP embeddings
             self.umap_embedding = np.load(self.umap_file_path)
+            curation_dir = os.path.dirname(self.umap_file_path)
             
             if self.umap_embedding.ndim != 2 or self.umap_embedding.shape[1] != 2:
                 self.status_text.object = "**Error:** UMAP file must be 2D with shape (n_points, 2)"
@@ -134,10 +136,31 @@ class AppOrchestrator:
                 print("NN features shape:", self.nn_features.shape)
                 print("UMAP embedding shape:", self.umap_embedding.shape)
                 return
+            
+            pc1_var = np.var(self.nn_features[:, 0])
+            
+            # Check for extra features
+            # curation_features.npy is a dict of additional features (no need to include the PCA in this as this is loaded by default anyway)
+            # each key should be the name of the feature, and the value should be a numpy array of shape (n_ROIs, feature_dim)
+            if os.path.exists(os.path.join(curation_dir, 'curation_features.npy')):
+                self.feature_dict = np.load(os.path.join(curation_dir, 'curation_features.npy'), allow_pickle=True).item()
+                for key, value in self.feature_dict.items():
+                    if value.shape[0] == n_points:
+                        print(f"Using {key} for curation: shape {value.shape}")
+                        value_scaled = value - np.mean(value, axis=0, keepdims=True)
+                        value_scaled = value_scaled / (np.std(value_scaled, axis=0, keepdims=True) + 1e-6) * np.sqrt(pc1_var)
+                        self.available_features[key] = value_scaled
+                    else:
+                        print(f"Ignoring {key} due to size mismatch: {value.shape} vs {n_points} ROIs")
+            if 'PCA' not in self.available_features:
+                self.available_features['PCA'] = self.nn_features
+            self.available_features.move_to_end('PCA', last=False)
+            self.features_toggle = pn.widgets.ToggleGroup(options=list(self.available_features.keys()))
+            self.features_toggle.value = ['PCA']
+            self.features_toggle.param.watch(self.update_curation_features, 'value')
 
             # Set up classifications file
-            file_stem = Path(self.umap_file_path).stem
-            self.classifications_file = os.path.join(os.getcwd(), "curation", f"{file_stem}_classifications.json")
+            self.classifications_file = os.path.join(curation_dir, f"roi_classifications.json")
             
             # Load existing classifications
             self.load_existing_classifications(n_points)
@@ -279,6 +302,18 @@ class AppOrchestrator:
         if self.hist_viewer:
             self.hist_viewer.load_cluster_data(cluster_id, self.display_data)
     
+    def update_curation_features(self, event=None):
+        """Update the features used for curation based on toggle selection"""
+        selected_features = self.features_toggle.value
+        if not selected_features:
+            self.curation_features_to_use = ['PCA']
+            self.features_toggle.value = ['PCA']
+        else:
+            self.curation_features_to_use = list(selected_features)
+        
+        # Re-run clustering with new features
+        self.update_clusters()
+
     def update_clusters(self, event=None):
         """Update clustering"""
         if self.full_data is None:
@@ -286,10 +321,12 @@ class AppOrchestrator:
         
         n_clusters = self.cluster_slider.value
         self.status_text.object = f"**Status:** Computing {n_clusters} clusters, please wait..."
+
+        self.curation_features = np.hstack([self.available_features[feat] for feat in self.curation_features_to_use])
         
         try:
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-            new_clusters = kmeans.fit_predict(self.nn_features)
+            new_clusters = kmeans.fit_predict(self.curation_features)
             
             # Update full dataset
             self.full_data['cluster'] = new_clusters
@@ -449,12 +486,11 @@ class AppOrchestrator:
             self.classify_cluster_cell_button,
             pn.Spacer(height=10),
             self.classify_cluster_not_cell_button,
-            pn.Spacer(height=20),
-            "## General Controls",
+            pn.Spacer(height=10),
             self.reset_button,
             pn.Spacer(height=10),
             self.save_button,
-            pn.Spacer(height=20),
+            pn.Spacer(height=10),
             self.status_text
         ]
 
@@ -463,6 +499,7 @@ class AppOrchestrator:
             pn.Spacer(height=10),
             self.cluster_button,
             pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=200),
+            self.features_toggle,
             self.view_toggle,
             *classification_controls,
             width=300,
