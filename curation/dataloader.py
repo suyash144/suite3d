@@ -425,11 +425,11 @@ class Suite3DProcessor:
         combined_patches = np.zeros((total_cells, self.nchannel, self.nbz, self.nby, self.nbx), 
                                    dtype=np.float32)
         
-        all_shot = []
+        all_shot, all_edge = [], []
         
         # Load and concatenate each session
         current_idx = 0
-        for session_info in session_info_list:
+        for i, session_info in enumerate(session_info_list):
             session_name = session_info['session_name']
             n_cells = session_info['n_cells']
             
@@ -454,11 +454,18 @@ class Suite3DProcessor:
                 print(f"Warning: {patches_file} not found")
 
             shot_file = self.output_dir.parent / "shot_noise.npy"
-            all_shot.append(np.load(shot_file))    
+            all_shot.append(np.load(shot_file))
+
+            edge_file = self.output_dir.parent / "edge_cells.npy"
+            all_edge.append(np.load(edge_file))
 
         all_shot = np.concatenate(all_shot)
         combined_shot_file = self.output_dir / "all_sessions_shot_noise.npy"
         np.save(combined_shot_file, all_shot)
+
+        all_edge = np.concatenate(all_edge)
+        combined_edge_file = self.output_dir / "all_sessions_edge_cells.npy"
+        np.save(combined_edge_file, all_edge)
 
         # Save combined dataset
         combined_patches_file = self.output_dir / "all_sessions_patches.npy"
@@ -542,14 +549,21 @@ def main(data_directory: str = None, output_directory: str = None):
     # Now create H5 dataset for curation
     data = np.load(os.path.join(output_directory, "all_sessions_patches.npy"), allow_pickle=True)
     shot = np.load(os.path.join(output_directory, "all_sessions_shot_noise.npy"), allow_pickle=True)
+    edge = np.load(os.path.join(output_directory, "all_sessions_edge_cells.npy"), allow_pickle=True)
+    info = np.load(os.path.join(output_directory, "all_sessions_info.npy"), allow_pickle=True).item()
+    cell_counts = info['session_cell_counts']
+    session_id = [i for i, count in enumerate(cell_counts) for _ in range(count)]
     h5_path = os.path.join(output_directory, "dataset.h5")
     with h5py.File(h5_path, 'w') as hf:
         hf.create_dataset("data",  data=data)
         hf.create_dataset("shot_noise",  data=shot)
+        hf.create_dataset("edge_cells",  data=edge)
+        hf.create_dataset("session_id",  data=np.array(session_id, dtype=np.int32))
     
     # Now the npy file can be safely deleted
     os.remove(os.path.join(output_directory, "all_sessions_patches.npy"))
     os.remove(os.path.join(output_directory, "all_sessions_shot_noise.npy"))
+    os.remove(os.path.join(output_directory, "all_sessions_edge_cells.npy"))
     print(f"H5 dataset created at {h5_path}")
 
 

@@ -29,6 +29,8 @@ class AppOrchestrator:
         self.nn_features = None
         self.full_data = None
         self.shot_noise = None
+        self.edge_cells = None
+        self.session_id = None
         self.footprint_size = None
         self.display_data = None
         self.classifications = None
@@ -37,7 +39,7 @@ class AppOrchestrator:
         self.labelled_features_idx = []
         self.labels = []
         self.available_features = OrderedDict()
-        self.curation_features_to_use = []
+        self.curation_features_to_use = ['PCA']
         
         # Components
         self.umap_visualiser = None
@@ -85,7 +87,7 @@ class AppOrchestrator:
 
         self.view_toggle = pn.widgets.Select(
             name='View Mode', 
-            options={'Cluster': 'Clus', 'Probability': 'Prob', 'Shot Noise': 'SNR', 'Footprint Size': 'Size'},
+            options={'Cluster': 'Clus', 'Probability': 'Prob', 'Shot Noise': 'SNR', 'Footprint Size': 'Size', 'Session': 'Session', 'Edge Cells': 'Edge'},
             disabled_options=['Prob'],
             value='Clus', 
             width=200
@@ -231,7 +233,8 @@ class AppOrchestrator:
         if self.display_data is not None:
 
             # For UMAP visualiser, we just pass in the sampled (or not) data - no need here for the full dataset
-            self.umap_visualiser = UMAPVisualiser(self.display_data, self.shot_noise[self.sample_indices], self.footprint_size[self.sample_indices])
+            self.umap_visualiser = UMAPVisualiser(self.display_data, self.shot_noise[self.sample_indices], self.footprint_size[self.sample_indices],
+                                                  self.edge_cells[self.sample_indices], self.session_id[self.sample_indices])
             # Subscribe to selection events
             self.umap_visualiser.on_cluster_selected = self.on_cluster_selected
 
@@ -248,21 +251,11 @@ class AppOrchestrator:
             self.hdf5_file = h5py.File(self.hdf5_path, 'r')
             
             # Find the main dataset (same logic as BoxViewer)
-            if len(self.hdf5_file.keys()) == 1:
-                dataset_key = list(self.hdf5_file.keys())[0]
-                self.dataset = self.hdf5_file[dataset_key]
-                self.status_text.object = f"**Status:** Opened HDF5 dataset '{dataset_key}'"
+            self.dataset = self.hdf5_file.get('data', None)
+            if self.dataset is None:
+                self.status_text.object = "**Error:** Couldn't load the dataset from HDF5 file."
             else:
-                possible_keys = ['data', 'dataset', 'samples', 'X']
-                for key in possible_keys:
-                    if key in self.hdf5_file:
-                        self.dataset = self.hdf5_file[key]
-                        self.status_text.object = f"**Status:** Using dataset '{key}'"
-                        break
-                else:
-                    available_keys = list(self.hdf5_file.keys())
-                    self.status_text.object = f"**Error:** Please specify dataset. Available: {available_keys}"
-                    return
+                self.status_text.object = f"**Status:** Using HDF5 dataset"
             
             # Verify expected shape
             if self.dataset.ndim != 5 or self.dataset.shape[1:] != (3, 5, 20, 20):
@@ -279,6 +272,28 @@ class AppOrchestrator:
                     print("Therefore ignoring shot noise")
             else:
                 print("No shot noise in hdf5")
+            
+            # Load edge cells if available
+            if 'edge_cells' in self.hdf5_file:
+                edge_cells = self.hdf5_file['edge_cells'][:]
+                if edge_cells.shape[0] == self.dataset.shape[0]:
+                    self.edge_cells = edge_cells
+                else:
+                    print(f"Found edge cells but shape mismatch: {edge_cells.shape} vs {self.dataset.shape} (edge cells vs dataset length)")
+                    print("Therefore ignoring edge cells")
+            else:
+                print("No edge cells in hdf5")
+
+            # Load session IDs if available
+            if 'session_id' in self.hdf5_file:
+                session_id = self.hdf5_file['session_id'][:]
+                if session_id.shape[0] == self.dataset.shape[0]:
+                    self.session_id = session_id
+                else:
+                    print(f"Found session IDs but shape mismatch: {session_id.shape} vs {self.dataset.shape} (session ID vs dataset length)")
+                    print("Therefore ignoring session IDs")
+            else:
+                print("No session IDs in hdf5")
 
             # compute footprint sizes
             self.footprint_size = np.sum(self.dataset[:, 2, :, :, :] > 0, axis=(1,2,3))

@@ -8,13 +8,15 @@ from bokeh.colors import RGB
 class UMAPVisualiser:
     """Pure UMAP visualisation component - handles only plot rendering and interactions"""
     
-    def __init__(self, data=None, shot_noise=None, footprint_size=None):
+    def __init__(self, data=None, shot_noise=None, footprint_size=None, edge_cells=None, session_id=None):
         """
         Initialize with data DataFrame containing: umap_x, umap_y, cluster, classification
         """
         self.data = data
         self.shot_noise = shot_noise
         self.footprint_size = footprint_size
+        self.edge_cells = edge_cells
+        self.session_id = session_id
         self.probs = None
         self.source = None
         self.plot = None
@@ -48,8 +50,8 @@ class UMAPVisualiser:
     def set_view_mode(self, event):
         """Set view mode: 'clus', 'prob', 'snr', or 'size'"""
         mode = event.new.lower()
-        if mode not in ['clus', 'prob', 'snr', 'size']:
-            raise ValueError("View mode must be 'clus', 'prob', 'snr', or 'size'.")
+        if mode not in ['clus', 'prob', 'snr', 'size', 'session', 'edge']:
+            raise ValueError("View mode must be 'clus', 'prob', 'snr', 'session', 'edge', or 'size'.")
         
         self.view_mode = mode
         self.update_plot()
@@ -157,7 +159,22 @@ class UMAPVisualiser:
             for i in range(n_points):
                 size_val = norm_size[i]
                 colors[i] = Viridis256[int(size_val * 255)]
+        elif self.view_mode == "session":
+            # For all ROIs, use session ID to set colors
+            unique_sessions = np.unique(self.session_id)
+            session_color_map = {sess: Category20[20][i % 20] for i, sess in enumerate(unique_sessions)}
+            for i in range(n_points):
+                sess_id = self.session_id[i]
+                colors[i] = session_color_map[sess_id]
+        elif self.view_mode == "edge":
+            # For all ROIs, use edge cell status to set colors
+            for i in range(n_points):
+                if self.edge_cells[i]:
+                    colors[i] = 'red'
+                else:
+                    colors[i] = 'blue'
         else:
+            # Cluster mode
             colors[cell_mask] = 'black'
             colors[not_cell_mask] = 'gray'
             # For unclassified, use cluster colors
@@ -212,10 +229,12 @@ class UMAPVisualiser:
             nonselection_alpha=0.1
         )
 
-        if self.view_mode == 'clus' and self.color_bar is not None and self.color_bar in self.plot.right:
+        no_color_bar = ['clus', 'session', 'edge']
+
+        if self.view_mode in no_color_bar and self.color_bar is not None and self.color_bar in self.plot.right:
             # if in cluster mode, remove color bar if present
             self.plot.right.remove(self.color_bar)
-        elif self.view_mode == 'clus':
+        elif self.view_mode in no_color_bar:
             self.color_bar = None
         else:
             if self.color_bar is not None and self.color_bar in self.plot.right:
