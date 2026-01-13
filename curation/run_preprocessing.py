@@ -35,7 +35,7 @@ if __name__ == "__main__":
     from dimensionality_reduction import PCAfunction
 
     # Step 1: Run the dataloader to load all the ROIs
-    jobdir = r"C:\Users\suyash\UCL\s3d_demo_data\s3d-demo-std"
+    jobdir = r"path/to/data/directory"
     output_directory = os.path.join(jobdir, 'rois', 'curation')
     os.makedirs(output_directory, exist_ok=True)
     main(data_directory=jobdir, output_directory=output_directory)

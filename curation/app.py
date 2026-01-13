@@ -551,12 +551,9 @@ def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
 
 if __name__ == "__main__":
 
-    # app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\AE16_umap.npy",  
-    #                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\AE16_features.npy", 
-    #                 r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
-    app = create_app(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_UMAP.npy",  
-                    r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\fprint_PCA.npy", 
-                    r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5")
+    app = create_app(r"\\path\to\umap_2d.npy",  
+                    r"\\path\to\pca_embeddings.npy", 
+                    r"\\path\to\dataset.h5")
     app.servable()
 
     app.show(port=5007)

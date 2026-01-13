@@ -50,25 +50,10 @@ class Suite3DProcessor:
         if f_path.exists():
             session_data['F'] = np.load(f_path)
         
-        # Load neuropil data
-        fneu_path = session_path / "Fneu.npy"
-        if fneu_path.exists():
-            session_data['Fneu'] = np.load(fneu_path)
-            
-        # Load spikes data
-        spks_path = session_path / "spks.npy"
-        if spks_path.exists():
-            session_data['spks'] = np.load(spks_path)
-        
         # Load info dictionary
         info_path = session_path / "info.npy"
         if info_path.exists():
             session_data['info'] = np.load(info_path, allow_pickle=True).item()
-        
-        # Load cell classification
-        iscell_path = session_path / "iscell.npy"
-        if iscell_path.exists():
-            session_data['iscell'] = np.load(iscell_path)
             
         # Load cell statistics
         stats_path = session_path / "stats.npy"
@@ -253,7 +238,7 @@ class Suite3DProcessor:
         session_data = self.load_session_data(session_path)
         
         # Check required data exists
-        required_keys = ['info', 'stats']
+        required_keys = ['info', 'stats', 'F']
         for key in required_keys:
             if key not in session_data:
                 raise ValueError(f"Required file {key}.npy not found in {session_path}")
@@ -261,7 +246,7 @@ class Suite3DProcessor:
         info = session_data['info']
         stats = session_data['stats']
         fnpy = session_data['F']
-        shot = quality_metrics.shot_noise_pct(fnpy, 4)
+        shot = quality_metrics.shot_noise_suyash(fnpy, 4)
         
         # Get mean image and correlation map
         if 'mean_img' not in info:
@@ -276,19 +261,8 @@ class Suite3DProcessor:
                 corrmap = info['max_img']
                 print("Using max_img as second channel (corrmap/vmap not found)")
             else:
-                corrmap = mean_img.copy()
+                corrmap = mean_img
                 print("Using mean_img as second channel (corrmap/vmap not found)")
-        
-        # We actually don't want to filter ROIs as that is the whole point of curation
-        # # Filter for actual cells
-        # cell_indices = np.where(iscell[:, 0] == 1)[0]
-        # n_cells = len(cell_indices)
-        
-        # print(f"Found {n_cells} cells out of {len(stats)} ROIs")
-        
-        # if n_cells == 0:
-        #     print("Warning: No cells found in this session, skipping")
-        #     return None
 
         n_cells = len(stats)
         edge_cells = np.zeros(n_cells, dtype=bool)
@@ -327,12 +301,7 @@ class Suite3DProcessor:
         # Prepare session info
         session_info = {
             'session_name': session_path.name,
-            'n_cells': n_cells,
-            'n_rois_total': len(stats),
-            'image_shape': mean_img.shape,
-            'patch_shape': (self.nbz, self.nby, self.nbx),
-            'has_corrmap': 'corrmap' in info,
-            'has_vmap': 'vmap_raw' in info
+            'n_cells': n_cells
         }
         
         # Save immediately to free memory
@@ -344,11 +313,8 @@ class Suite3DProcessor:
         np.save(shot_file, shot)
 
         patches_file = self.output_dir / f"{session_name}_patches.npy"
-        info_file = self.output_dir / f"{session_name}_info.npy"
         
-        print(f"Saving patches to {patches_file}")
         np.save(patches_file, cell_patches)
-        np.save(info_file, session_info)
 
         # Force garbage collection to free memory
         del cell_patches, mean_img, corrmap, session_data, shot
@@ -448,16 +414,19 @@ class Suite3DProcessor:
                 current_idx += n_cells
                 
                 # Free memory immediately
+                os.remove(patches_file)
                 del session_patches
                 gc.collect()
             else:
                 print(f"Warning: {patches_file} not found")
 
-            shot_file = self.output_dir.parent / "shot_noise.npy"
+            shot_file = self.data_dir / session_name / "shot_noise.npy"
             all_shot.append(np.load(shot_file))
+            os.remove(shot_file)
 
-            edge_file = self.output_dir.parent / "edge_cells.npy"
+            edge_file = self.data_dir / session_name / "edge_cells.npy"
             all_edge.append(np.load(edge_file))
+            os.remove(edge_file)
 
         all_shot = np.concatenate(all_shot)
         combined_shot_file = self.output_dir / "all_sessions_shot_noise.npy"
