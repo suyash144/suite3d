@@ -11,42 +11,6 @@ from datetime import datetime
 from scipy.ndimage import rotate
 
 
-class SingleChannelCNN(nn.Module):
-    """Lightweight 3D CNN for processing a single channel (1, 5, 20, 20) - only 3 layers"""
-    
-    def __init__(self, channel_feature_dim=64):
-        super(SingleChannelCNN, self).__init__()
-        
-        # Three convolutional layers
-        self.conv1 = nn.Conv3d(1, 4, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm3d(4)
-        
-        self.conv2 = nn.Conv3d(4, 8, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm3d(8)
-        
-        # Final conv with mild downsampling
-        self.conv3 = nn.Conv3d(8, 16, kernel_size=3, stride=(1, 2, 2), padding=1)
-        self.bn3 = nn.BatchNorm3d(16)
-        
-        # Global pooling for this channel
-        self.global_pool = nn.AdaptiveAvgPool3d(1)
-        self.fc = nn.Linear(16, channel_feature_dim)
-        self.dropout = nn.Dropout(0.3)
-    
-    def forward(self, x):
-        # x shape: (batch, 1, 5, 20, 20)
-        x = F.relu(self.bn1(self.conv1(x)))  # (batch, 4, 5, 20, 20)
-        x = F.relu(self.bn2(self.conv2(x)))  # (batch, 8, 5, 20, 20)
-        x = F.relu(self.bn3(self.conv3(x)))  # (batch, 16, 5, 10, 10)
-
-        x = self.global_pool(x)  # (batch, 16, 1, 1, 1)
-        x = x.view(x.size(0), -1)  # (batch, 16)
-        x = self.dropout(x)
-        x = self.fc(x)  # (batch, channel_feature_dim)
-        
-        return x
-
-
 class MultiChannelCNN(nn.Module):
     """3D CNN with separate processing for each of the 3 channels"""
     
@@ -63,7 +27,6 @@ class MultiChannelCNN(nn.Module):
         # Fusion layers to combine features from all channels
         self.fusion_fc1 = nn.Linear(3 * channel_feature_dim, 256)
         self.fusion_bn = nn.BatchNorm1d(256)
-        self.fusion_dropout = nn.Dropout(0.3)
         self.fusion_fc2 = nn.Linear(256, feature_dim)
         
     def forward(self, x):
@@ -85,10 +48,48 @@ class MultiChannelCNN(nn.Module):
         
         # Fusion layers
         x = F.relu(self.fusion_bn(self.fusion_fc1(combined_features)))
-        x = self.fusion_dropout(x)
         x = self.fusion_fc2(x)  # (batch, feature_dim)
         
         return x
+
+
+class SingleChannelCNN(nn.Module):
+    def __init__(self, channel_feature_dim=64, hidden_dim=32):
+        super(SingleChannelCNN, self).__init__()
+        
+        self.conv_in = nn.Conv3d(1, hidden_dim, kernel_size=3, padding=1)
+        self.bn_in = nn.BatchNorm3d(hidden_dim)
+        
+        self.conv1 = nn.Conv3d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm3d(hidden_dim)
+        
+        self.conv2 = nn.Conv3d(hidden_dim, hidden_dim, kernel_size=3, 
+                               stride=(1, 2, 2), padding=1)
+        self.bn2 = nn.BatchNorm3d(hidden_dim)
+        
+        self.downsample_skip = nn.AvgPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2))
+        self.global_pool = nn.AdaptiveAvgPool3d(1)
+    
+    def forward(self, x):
+
+        x = F.relu(self.bn_in(self.conv_in(x)))
+        
+        identity = x 
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out += identity
+        x = F.relu(out)
+        
+        identity = self.downsample_skip(x)
+        out = self.conv2(x)
+        out = self.bn2(out)
+        out += identity
+        out = F.relu(out)
+
+        out = self.global_pool(out)
+        out = out.view(out.size(0), -1)
+        
+        return out
 
 
 class ProjectionHead(nn.Module):
@@ -111,9 +112,9 @@ class ContrastiveModel(nn.Module):
     
     def __init__(self, backbone_feature_dim=128, output_dim=32):
         super(ContrastiveModel, self).__init__()
-        self.backbone = MultiChannelCNN(channel_feature_dim=32, feature_dim=backbone_feature_dim)
+        self.backbone = SingleChannelCNN(channel_feature_dim=32)
         self.projection_head = ProjectionHead(
-            input_dim=backbone_feature_dim,
+            input_dim=32,
             output_dim=output_dim
         )
     
@@ -157,10 +158,12 @@ class Augmentation3D:
         
         # Random rotations
         if self.rotation_range > 0:
-            for channel in range(volume.shape[0]):
-                # Rotation in XY plane (around Z axis)
-                angle_z = np.random.uniform(-self.rotation_range, self.rotation_range)
-                volume[channel] = rotate(volume[channel], angle_z, axes=(1, 2), reshape=False, order=1)
+            # for channel in range(volume.shape[0]):
+            #     # Rotation in XY plane (around Z axis)
+            #     angle_z = np.random.uniform(-self.rotation_range, self.rotation_range)
+            #     volume[channel] = rotate(volume[channel], angle_z, axes=(1, 2), reshape=False, order=1)
+            volume = rotate(volume, np.random.uniform(-self.rotation_range, self.rotation_range), 
+                            axes=(1, 2), reshape=False, order=1)
         
         # Random flip along z-axis (not same as 180-degree rotation)
         if np.random.random() < self.prob:
@@ -172,22 +175,22 @@ class Augmentation3D:
             noise = np.random.normal(0, self.gaussian_noise_std, volume.shape)
             volume += noise
 
-        # Shot noise
-        if np.random.random() < self.prob and self.shot_noise_std > 0:
-            noise = np.random.normal(0, self.shot_noise_std, volume.shape)
-            volume += volume * noise                    # element-wise multiplication
+        # # Shot noise
+        # if np.random.random() < self.prob and self.shot_noise_std > 0:
+        #     noise = np.random.normal(0, self.shot_noise_std, volume.shape)
+        #     volume += volume * noise                    # element-wise multiplication
 
-        # Brightness adjustment
-        if np.random.random() < self.prob and self.brightness_range > 0:
-            brightness_factor = np.random.uniform(-self.brightness_range, self.brightness_range)
-            volume[:2, :, :] += brightness_factor
+        # # Brightness adjustment
+        # if np.random.random() < self.prob and self.brightness_range > 0:
+        #     brightness_factor = np.random.uniform(-self.brightness_range, self.brightness_range)
+        #     volume[:2, :, :] += brightness_factor
 
         # Shift within plane - this wraps around values that go out of bounds
         if np.random.random() * 2 < self.prob:
             shift_x = np.random.randint(-5, 5)
             shift_y = np.random.randint(-5, 5)
             shift_z = np.random.randint(-2, 3)
-            volume = np.roll(volume, shift=(0, shift_z, shift_x, shift_y), axis=(0, 1, 2, 3))
+            volume = np.roll(volume, shift=(shift_z, shift_x, shift_y), axis=(0, 1, 2))
     
         return volume.astype(np.float32)
 
@@ -210,7 +213,7 @@ class HDF5Dataset(Dataset):
                 # Sample a subset to compute stats (avoid loading full dataset)
                 n_samples = min(1000, self.length)
                 indices = np.random.choice(self.length, n_samples, replace=False)
-                samples = [f[dataset_key][i] for i in indices]
+                samples = [f[dataset_key][i, 2, :, :, :] for i in indices]
                 all_samples = np.stack(samples)
                 
                 self.mean = all_samples.mean()
@@ -222,7 +225,9 @@ class HDF5Dataset(Dataset):
     
     def __getitem__(self, idx):
         with h5py.File(self.hdf5_path, 'r') as f:
-            sample = f[self.dataset_key][idx]  # Shape: (3, 5, 20, 20)
+            # sample = f[self.dataset_key][idx]  # Shape: (3, 5, 20, 20)
+            sample = f[self.dataset_key][idx, 2, :, :, :]  # Shape: (5, 20, 20)
+            sample = np.expand_dims(sample, axis=0)  # Shape: (1, 5, 20, 20)
             
         sample = sample.astype(np.float32)
         
@@ -386,6 +391,4 @@ class ContrastiveLearner:
     def close_tensorboard(self):
         """Close TensorBoard writer"""
         self.writer.close()
-
-
 

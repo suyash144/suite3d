@@ -1,4 +1,4 @@
-from model import *
+from neural_network.model import *
 import os
 
 
@@ -25,7 +25,7 @@ def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, outpu
         experiment_name=experiment_name
     )
     
-    learner.writer.add_text('Model/Architecture', 'MultiChannelCNN with 3 independent CNNs')
+    learner.writer.add_text('Model/Architecture', 'Single Channel CNN on Footprint Only')
     learner.writer.add_text('Model/Total_Parameters', f'{370880:,} parameters')
     learner.writer.add_text('Training/Batch_Size', str(batch_size))
     learner.writer.add_text('Training/Learning_Rate', str(1e-3))
@@ -78,9 +78,9 @@ def train_contrastive_model(hdf5_path, dataset_key='data', batch_size=256, outpu
 
 if __name__ == "__main__":
 
-    hdf5_path = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\data\dataset.h5"
+    hdf5_path = r"\\path\to\dataset.h5"
 
-    exp_name = "contrastive_32dim"
+    exp_name = "footprint_only_contrastive_16d_augmented"
 
     augmentations = Augmentation3D()                # default augmentation settings
     
@@ -88,16 +88,16 @@ if __name__ == "__main__":
         hdf5_path=hdf5_path,
         dataset_key='data',
         batch_size=256,
-        output_dim=32,
+        output_dim=16,
         num_epochs=300,
         device='cuda',
-        save_path=os.path.join(r"C:\Users\suyash\UCL\suite3d\models", exp_name, "ckpt"),
-        log_dir=os.path.join(r"C:\Users\suyash\UCL\suite3d\models", exp_name, "logs"),
+        save_path=os.path.join(r"path\to\save\models", exp_name, "ckpt"),
+        log_dir=os.path.join(r"path\to\save\models", exp_name, "logs"),
         experiment_name=exp_name,
         augmentation_config=augmentations
     )
     
-    # Extract features for UMAP
+    # Extract trained model embeddings
     dataset = HDF5Dataset(hdf5_path, dataset_key='data')
     dataloader = DataLoader(dataset, batch_size=256, shuffle=False, num_workers=4)
     
