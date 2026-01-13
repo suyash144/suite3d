@@ -756,31 +756,14 @@ def main():
     """Command line interface for dataset visualisation."""
 
     # Initialize (uses memory mapping)
-    viz = Suite3DVisualiser(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_patches.npy", r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\all_sessions_info.npy")
+    viz = Suite3DVisualiser(r"\\path\to\all_sessions_patches.npy", r"\\path\to\all_sessions_info.npy")
 
     # # Quick overview
     # viz.print_dataset_summary()
 
     # # Visualize random samples  
-    # viz.visualise_random_samples(n_samples=20)
+    viz.visualise_random_samples(n_samples=20)
 
-    # NEW: Visualize cluster examples
-    # cluster_labels_file = r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\umap_cluster_labels.npy"
-    # viz.visualise_cluster_examples(cluster_labels_file, n_examples=5)
-    # Visualise cluster mean and median
-    cluster_reps = np.load(r"\\znas.cortexlab.net\Lab\Share\Ali\for-suyash\output\cluster_reps_spatfilt.npy", allow_pickle=True).item()
-    arr1, arr2 = np.array(cluster_reps['mean']), np.array(cluster_reps['median'])
-    viz.visualise_cluster_arrays_side_by_side(arr1, arr2)
-
-    # # Find and inspect bright cells
-    # bright_cells = viz.find_interesting_cells('bright', n_cells=10)
-    # viz.inspect_specific_cells(bright_cells[:5])
-
-    # # Interactive browsing (great for Jupyter)
-    # browser = viz.interactive_cell_browser()
-
-    # # Validate your footprint channel
-    # viz.validate_footprint_channel(n_samples=50)
 
 
 if __name__ == "__main__":
