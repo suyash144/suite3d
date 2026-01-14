@@ -403,11 +403,13 @@ class AppOrchestrator:
         self.labelled_features_idx.extend(clus_idx)
         self.labels.extend(np.array([1 if classification_type == 'cell' else 0] * clus_idx.shape[0]))
 
+        self.curation_features = np.hstack([self.available_features[feat] for feat in self.curation_features_to_use])
+
         if len(np.unique(self.labels)) > 1:
             # Fit model if we have positive and negative samples
-            self.linear_model.fit(self.nn_features[self.labelled_features_idx], self.labels)
+            self.linear_model.fit(self.curation_features[self.labelled_features_idx], self.labels)
             class_idx = np.argwhere(self.linear_model.classes_ == 1)[0][0]
-            self.cell_probs = self.linear_model.predict_proba(self.nn_features[self.sample_indices])[:, class_idx]
+            self.cell_probs = self.linear_model.predict_proba(self.curation_features[self.sample_indices])[:, class_idx]
             self.umap_visualiser.set_probs(self.cell_probs)
 
             if 'Prob' in self.view_toggle.disabled_options:
