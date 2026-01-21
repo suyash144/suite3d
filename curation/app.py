@@ -11,8 +11,24 @@ from box_viewer import BoxViewer
 from hist_viewer import HistViewer
 from sklearn.linear_model import SGDClassifier
 import h5py
+from umap import UMAP
+import time
 
 pn.extension()
+
+# Mapping from HistViewer property names to UMAPVisualiser view modes
+PROPERTY_TO_VIEW_MODE = {
+    'Footprint Size': 'size',
+    'ROI Shot Noise': 'snr',
+    'Session': 'session',
+    'Edge Cells': 'edge',
+    'Mean Intensity': 'intensity',
+    'Mean Correlation': 'correlation',
+    'Probability': 'prob',
+    'Peak Value': 'peak',
+    'Voxel SNR': 'vox',
+    'Contamination Factor': 'contamination'
+}
 
 
 class AppOrchestrator:
@@ -28,10 +44,19 @@ class AppOrchestrator:
         self.umap_embedding = None
         self.nn_features = None
         self.full_data = None
-        self.shot_noise = None
-        self.edge_cells = None
-        self.session_id = None
-        self.footprint_size = None
+        self.properties = {
+            'Footprint Size': None,
+            'Mean Intensity': None,
+            'Mean Correlation': None,
+            'ROI Shot Noise': None,
+            'Edge Cells': None,
+            'Session': None,
+            'Voxel SNR': None,
+            'Probability': None,
+            'Peak Value': None,
+            'Contamination Factor': None
+        }
+        self.UMAPtime = None
         self.display_data = None
         self.classifications = None
         self.sample_indices = None
@@ -50,7 +75,7 @@ class AppOrchestrator:
         # Shared widgets
         self.cluster_slider = pn.widgets.IntSlider(
             name='Number of Clusters', 
-            start=10, end=100, value=20, 
+            start=3, end=100, value=20, 
             width=200
         )
         
@@ -63,36 +88,37 @@ class AppOrchestrator:
         # Classification buttons
         self.classify_cluster_cell_button = pn.widgets.Button(
             name='Mark Cluster as CELL', 
-            button_type='success',
+            button_type='danger',
             width=200
         )
         
         self.classify_cluster_not_cell_button = pn.widgets.Button(
             name='Mark Cluster as NOT CELL', 
-            button_type='success',
+            button_type='danger',
+            button_style='outline',
             width=200
         )
         
         self.reset_button = pn.widgets.Button(
             name='Reset Classifications', 
-            button_type='default',
+            button_type='warning',
             width=200
         )
         
         self.save_button = pn.widgets.Button(
             name='Save Classifications',
-            button_type='success', 
+            button_type='success',
             width=200
         )
 
-        self.view_toggle = pn.widgets.Select(
-            name='View Mode', 
-            options={'Cluster': 'Clus', 'Probability': 'Prob', 'Shot Noise': 'SNR', 'Footprint Size': 'Size', 'Session': 'Session', 'Edge Cells': 'Edge'},
-            disabled_options=['Prob'],
-            value='Clus', 
+        self.view_toggle = pn.widgets.ToggleGroup(
+            name='UMAP view mode',
+            options={'Cluster': 'cluster', 'Property': 'property'},
+            value='cluster',
+            behavior='radio',
             width=200
         )
-        
+
         # Status text
         self.status_text = pn.pane.Markdown(f"**Status:** Loading {umap_file_path}...", width=200)
         
@@ -107,11 +133,15 @@ class AppOrchestrator:
         self.load_data()
         self.create_components()
 
-        if self.shot_noise is None:
-            self.view_toggle.disabled_options.append('SNR')
+        # Set up view toggle callback
+        self.view_toggle.param.watch(self._on_view_toggle_change, 'value')
 
-        # Callback for view toggle (needs to be sent to umap visualiser)
-        self.view_toggle.param.watch(self.umap_visualiser.set_view_mode, 'value')
+        self.UMAPbutton = pn.widgets.Button(
+            name=f'Rerun UMAP ({self.UMAPtime}s)' if self.UMAPtime is not None else 'Rerun UMAP',
+            button_type='primary',
+            width=200
+        )
+        self.UMAPbutton.on_click(self.recompute_umap)
     
     def load_data(self):
         """Load and prepare all data with sampling coordination"""
@@ -148,17 +178,26 @@ class AppOrchestrator:
                 self.feature_dict = np.load(os.path.join(curation_dir, 'curation_features.npy'), allow_pickle=True).item()
                 for key, value in self.feature_dict.items():
                     if value.shape[0] == n_points:
-                        print(f"Using {key} for curation: shape {value.shape}")
+                        if len(np.unique(value)) <= 1:
+                            print(f"Ignoring {key} as it has 0 variance")
+                            continue
+                        print(f"Found property: {key}")
                         value_scaled = value - np.mean(value, axis=0, keepdims=True)
                         value_scaled = value_scaled / (np.std(value_scaled, axis=0, keepdims=True) + 1e-6) * np.sqrt(pc1_var)
-                        self.available_features[key] = value_scaled
+                        self.available_features[key] = np.expand_dims(value_scaled, axis=-1) if value_scaled.ndim == 1 else value_scaled
+
+                        # Load the curation features into self.properties for use in UMAP visualiser and hist viewer
+                        self.properties[key] = value
                     else:
                         print(f"Ignoring {key} due to size mismatch: {value.shape} vs {n_points} ROIs")
             if 'PCA' not in self.available_features:
                 self.available_features['PCA'] = self.nn_features
             self.available_features.move_to_end('PCA', last=False)
-            self.features_toggle = pn.widgets.ToggleGroup(options=list(self.available_features.keys()))
-            self.features_toggle.value = ['PCA']
+            self.features_toggle = pn.widgets.MultiChoice(
+                options=list(self.available_features.keys()),
+                value=['PCA'],
+                solid=False
+            )
             self.features_toggle.param.watch(self.update_curation_features, 'value')
 
             # Set up classifications file
@@ -180,6 +219,11 @@ class AppOrchestrator:
             # Initial clustering
             kmeans = KMeans(n_clusters=20, random_state=42, n_init='auto')
             initial_clusters = kmeans.fit_predict(self.nn_features)
+
+            info_file = os.path.join(curation_dir, 'all_sessions_info.npy')
+            if os.path.exists(info_file):
+                all_sessions_info = np.load(info_file, allow_pickle=True).item()
+                self.UMAPtime = all_sessions_info.get('UMAPtime', None)
             
             # Create full dataset
             self.full_data = pd.DataFrame({
@@ -229,21 +273,23 @@ class AppOrchestrator:
     def create_components(self):
         """Create and initialize the visualization components"""
         self._open_hdf5()
-        
+
         if self.display_data is not None:
 
-            # For UMAP visualiser, we just pass in the sampled (or not) data - no need here for the full dataset
-            self.umap_visualiser = UMAPVisualiser(self.display_data, self.shot_noise[self.sample_indices], self.footprint_size[self.sample_indices],
-                                                  self.edge_cells[self.sample_indices], self.session_id[self.sample_indices])
+            self.umap_visualiser = UMAPVisualiser(self.display_data, properties=self.properties, sample_indices=self.sample_indices, use_sampling=self.use_sampling)
             # Subscribe to selection events
             self.umap_visualiser.on_cluster_selected = self.on_cluster_selected
 
             # For box and hist viewers, we need the full dataset (self.dataset), so we pass this in along with the sampling info
             self.box_viewer = BoxViewer(self.dataset, self.sample_indices, self.use_sampling)
-            self.hist_viewer = HistViewer(self.dataset, self.shot_noise, self.footprint_size, self.sample_indices, self.use_sampling)
+            self.hist_viewer = HistViewer(self.dataset, self.properties, self.sample_indices, self.use_sampling)
 
             if self.box_viewer and self.hist_viewer:
                 self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
+
+            # Sync hist viewer property selection to UMAP view mode
+            if self.hist_viewer and self.umap_visualiser:
+                self.hist_viewer.property_selector.param.watch(self._on_hist_property_change, 'value')
 
     def _open_hdf5(self):
         """Open HDF5 file for reading (same pattern as BoxViewer)"""
@@ -266,7 +312,7 @@ class AppOrchestrator:
             if 'shot_noise' in self.hdf5_file:
                 shot_noise = self.hdf5_file['shot_noise'][:]
                 if shot_noise.shape[0] == self.dataset.shape[0]:
-                    self.shot_noise = np.clip(shot_noise, 0, 1)
+                    self.properties['ROI Shot Noise'] = np.clip(shot_noise, 0, 1)
                 else:
                     print(f"Found shot noise but shape mismatch: {shot_noise.shape} vs {self.dataset.shape} (shot noise vs dataset length)")
                     print("Therefore ignoring shot noise")
@@ -277,7 +323,7 @@ class AppOrchestrator:
             if 'edge_cells' in self.hdf5_file:
                 edge_cells = self.hdf5_file['edge_cells'][:]
                 if edge_cells.shape[0] == self.dataset.shape[0]:
-                    self.edge_cells = edge_cells
+                    self.properties['Edge Cells'] = edge_cells
                 else:
                     print(f"Found edge cells but shape mismatch: {edge_cells.shape} vs {self.dataset.shape} (edge cells vs dataset length)")
                     print("Therefore ignoring edge cells")
@@ -288,15 +334,12 @@ class AppOrchestrator:
             if 'session_id' in self.hdf5_file:
                 session_id = self.hdf5_file['session_id'][:]
                 if session_id.shape[0] == self.dataset.shape[0]:
-                    self.session_id = session_id
+                    self.properties['Session'] = session_id
                 else:
                     print(f"Found session IDs but shape mismatch: {session_id.shape} vs {self.dataset.shape} (session ID vs dataset length)")
                     print("Therefore ignoring session IDs")
             else:
                 print("No session IDs in hdf5")
-
-            # compute footprint sizes
-            self.footprint_size = np.sum(self.dataset[:, 2, :, :, :] > 0, axis=(1,2,3))
 
         except Exception as e:
             self.status_text.object = f"**Error:** Could not open HDF5 file: {str(e)}"
@@ -312,11 +355,32 @@ class AppOrchestrator:
         # Load cluster data in BoxViewer
         if self.box_viewer:
             self.box_viewer.load_cluster_data(cluster_id, self.display_data, tapped_idx)
-        
+
         # also load in HistViewer
         if self.hist_viewer:
             self.hist_viewer.load_cluster_data(cluster_id, self.display_data)
-    
+
+    def _on_hist_property_change(self, event):
+        """Sync UMAP view mode to match hist viewer property selection (only when in property mode)"""
+        if self.view_toggle.value != 'property':
+            return
+        property_name = event.new
+        view_mode = PROPERTY_TO_VIEW_MODE.get(property_name, 'clus')
+        if self.umap_visualiser:
+            self.umap_visualiser.set_view_mode(view_mode)
+
+    def _on_view_toggle_change(self, event):
+        """Handle switching between cluster and property coloring modes"""
+        if event.new == 'cluster':
+            if self.umap_visualiser:
+                self.umap_visualiser.set_view_mode('clus')
+        else:  # property mode
+            # Use whatever property is currently selected in hist viewer
+            if self.hist_viewer and self.umap_visualiser:
+                property_name = self.hist_viewer.property_selector.value
+                view_mode = PROPERTY_TO_VIEW_MODE.get(property_name, 'clus')
+                self.umap_visualiser.set_view_mode(view_mode)
+
     def update_curation_features(self, event=None):
         """Update the features used for curation based on toggle selection"""
         selected_features = self.features_toggle.value
@@ -352,6 +416,7 @@ class AppOrchestrator:
             # Update UMAP visualiser
             if self.umap_visualiser:
                 self.umap_visualiser.update_data(self.display_data)
+                self.view_toggle.value = 'cluster'  # Reset to cluster view
 
             # Update BoxViewer
             if self.box_viewer:
@@ -365,6 +430,40 @@ class AppOrchestrator:
             
         except Exception as e:
             self.status_text.object = f"**Error:** Clustering failed: {str(e)}"
+
+    def recompute_umap(self, event=None):
+        """Recompute UMAP embedding"""
+        if self.curation_features is None:
+            self.status_text.object = "**Error:** No features selected for UMAP recomputation"
+            return
+        
+        try:
+            self.status_text.object = "**Status:** Recomputing UMAP, please wait..."
+            self.UMAPbutton.name = "Running UMAP..."
+            start = time.time()
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=30, min_dist=0.1, metric='euclidean')
+            new_embedding = reducer.fit_transform(self.curation_features)
+            
+            # Update UMAP embedding
+            self.umap_embedding = new_embedding
+            self.full_data['umap_x'] = new_embedding[:, 0]
+            self.full_data['umap_y'] = new_embedding[:, 1]
+            
+            # Update display data
+            self.prepare_display_data()
+            
+            # Update UMAP visualiser
+            if self.umap_visualiser:
+                self.umap_visualiser.update_data(self.display_data)
+                self.view_toggle.value = 'cluster'  # Reset to cluster view
+            
+            end = time.time()
+            self.UMAPtime = np.round(end - start, 0)
+            self.UMAPbutton.name = f"Rerun UMAP ({self.UMAPtime}s)"
+            self.status_text.object = "**Status:** UMAP recomputation complete"
+        
+        except Exception as e:
+            self.status_text.object = f"**Error:** UMAP recomputation failed: {str(e)}"
     
     def classify_cluster_as_cell(self, event):
         """Classify entire cluster as cell"""
@@ -392,7 +491,7 @@ class AppOrchestrator:
         
         # Update UMAP visualiser
         if self.umap_visualiser:
-            self.umap_visualiser.update_data(self.display_data)
+            self.umap_visualiser.update_data(self.display_data, False)
         
         # Update status
         cell_count = sum(1 for c in self.full_data['classification'] if c == 'cell')
@@ -412,8 +511,7 @@ class AppOrchestrator:
             self.cell_probs = self.linear_model.predict_proba(self.curation_features[self.sample_indices])[:, class_idx]
             self.umap_visualiser.set_probs(self.cell_probs)
 
-            if 'Prob' in self.view_toggle.disabled_options:
-                self.view_toggle.disabled_options.remove('Prob')
+            self.hist_viewer.update_property('Probability', self.cell_probs)
 
         self.status_text.object = f"**Status:** Classified cluster {self.selected_cluster} ({cluster_size:,} points) as '{classification_type}' | Total - Cells: {cell_count:,}, Not cells: {not_cell_count:,}"
         
@@ -431,13 +529,14 @@ class AppOrchestrator:
         self.labelled_features_idx = []
         self.labels = []
         self.cell_probs = None
-        self.view_toggle.value = 'Clus'
-        if 'Prob' not in self.view_toggle.disabled_options:
-            self.view_toggle.disabled_options.append('Prob')
-        
+
         if self.umap_visualiser:
             self.umap_visualiser.update_data(self.display_data)
-        
+            self.view_toggle.value = 'cluster'  # Reset to cluster view
+
+        if self.hist_viewer:
+            self.hist_viewer.remove_property('Probability')
+
         self.status_text.object = "**Status:** Reset all classifications"
     
     def save_classifications(self, event):
@@ -492,7 +591,7 @@ class AppOrchestrator:
                 stats_display.object = f"**{total_points:,} points**"
         
         plot_column = pn.Column(
-            pn.pane.Markdown("### Data Curation UMAP", width=700, margin=(0, 0, 10, 0)),
+            pn.pane.Markdown("### Suite3D Data Curation", width=700, margin=(0, 0, 10, 0)),
             stats_display,
             plot_pane,
             width=720
@@ -515,8 +614,8 @@ class AppOrchestrator:
             self.cluster_slider,
             pn.Spacer(height=10),
             self.cluster_button,
-            pn.pane.Markdown("*Adjust slider then click 'Update Clustering'*", width=200),
             self.features_toggle,
+            self.UMAPbutton,
             self.view_toggle,
             *classification_controls,
             width=300,
@@ -546,16 +645,18 @@ class AppOrchestrator:
         )
 
 
-def create_app(umap_file, nn_features_path, hdf5_path="data.h5"):
+def create_app(curation_dir):
     """Create the application with orchestrator"""
+    umap_file = os.path.join(curation_dir, 'umap_2d.npy')
+    nn_features_path = os.path.join(curation_dir, 'pca_embeddings.npy')
+    hdf5_path = os.path.join(curation_dir, 'dataset.h5')
     orchestrator = AppOrchestrator(umap_file, nn_features_path=nn_features_path, hdf5_path=hdf5_path)
     return orchestrator.get_layout()
 
 if __name__ == "__main__":
 
-    app = create_app(r"\\path\to\umap_2d.npy",  
-                    r"\\path\to\pca_embeddings.npy", 
-                    r"\\path\to\dataset.h5")
+    curation_dir = r"C:\Users\suyash\UCL\tinya_data\rois\curation"
+    app = create_app(curation_dir)
     app.servable()
 
     app.show(port=5007)

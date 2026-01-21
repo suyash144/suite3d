@@ -10,6 +10,7 @@ from umap import UMAP
 import json
 import h5py
 from sklearn.feature_selection import VarianceThreshold
+import time
 
 
 def _iter_batches_permod(X: np.ndarray, batch_size: int) -> Iterable[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -230,6 +231,7 @@ def PCAfunction(
     
     # Run UMAP
     print("Running UMAP...")
+    start_time = time.time()
     umap_model = UMAP(
         n_neighbors=umap_neighbors,
         min_dist=umap_min_dist,
@@ -237,12 +239,14 @@ def PCAfunction(
         random_state=seed,
     )
     Y = umap_model.fit_transform(Z)
+    end_time = time.time()
+    UMAPtime = np.round(end_time - start_time, 0)
     
     # Save UMAP results
     np.save(os.path.join(out_dir, f"{savename}.npy"), Y.astype(np.float32))
     
     print(f"Pipeline complete. Results saved to: {out_dir}")
-    return out_dir
+    return UMAPtime
 
 
 def _visualize_pcs_multichannel(pc_components, image_shape, var_ratios, out_dir, n_viz, channel_names=None):
@@ -453,7 +457,7 @@ if __name__ == "__main__":
     #     savename="umap_2d",
     # )
 
-    PCAfunction(
+    UMAPtime = PCAfunction(
         X=X,
         ncomp=16,
         out_dir=OUT_DIR,

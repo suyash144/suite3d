@@ -238,15 +238,16 @@ class Suite3DProcessor:
         session_data = self.load_session_data(session_path)
         
         # Check required data exists
-        required_keys = ['info', 'stats', 'F']
+        required_keys = ['info', 'stats']
         for key in required_keys:
             if key not in session_data:
                 raise ValueError(f"Required file {key}.npy not found in {session_path}")
         
         info = session_data['info']
         stats = session_data['stats']
-        fnpy = session_data['F']
-        shot = quality_metrics.shot_noise_suyash(fnpy, 4)
+        fnpy = session_data.get('F', None)
+        if fnpy is not None:
+            shot = quality_metrics.shot_noise_suyash(fnpy, 4)
         
         # Get mean image and correlation map
         if 'mean_img' not in info:
@@ -266,10 +267,27 @@ class Suite3DProcessor:
 
         n_cells = len(stats)
         edge_cells = np.zeros(n_cells, dtype=bool)
+        footprint_sizes = np.zeros(n_cells, dtype=np.int32)
         
         # Initialize output array
         cell_patches = np.zeros((n_cells, self.nchannel, self.nbz, self.nby, self.nbx), 
                                dtype=np.float32)
+        
+        if 'contamination_factor' in stats[0].keys():
+            cont_factors = np.zeros(n_cells, dtype=np.float32)
+            track_contamination = True
+        else:
+            track_contamination = False
+        if 'peak_val' in stats[0].keys():
+            peak_vals = np.zeros(n_cells, dtype=np.float32)
+            track_peak = True
+        else:
+            track_peak = False
+        if 'vox_snrs' in stats[0].keys():
+            snrs = np.zeros(n_cells, dtype=np.float32)
+            track_snr = True
+        else:
+            track_snr = False
         
         # Extract patches for each cell
         for i, cell_stat in enumerate(stats):
@@ -297,27 +315,42 @@ class Suite3DProcessor:
             cell_patches[i, 2] = footprint_patch
 
             edge_cells[i] = is_edge_mean or is_edge_corr
+            footprint_sizes[i] = np.sum(footprint_patch > 0)
+
+            if track_contamination:
+                cont_factor = cell_stat['contamination_factor']
+                cont_factors[i] = cont_factor
+            if track_peak:
+                peak_val = cell_stat['peak_val']
+                peak_vals[i] = peak_val
+            if track_snr:
+                snr = cell_stat['vox_snrs']
+                snrs[i] = np.median(snr)
         
         # Prepare session info
         session_info = {
             'session_name': session_path.name,
-            'n_cells': n_cells
+            'n_cells': n_cells,
+            'edge_cells': edge_cells,
+            'footprint_size': footprint_sizes
         }
+        
+        if track_contamination:
+            session_info['contamination_factors'] = cont_factors
+        if track_peak:
+            session_info['peak_vals'] = peak_vals
+        if fnpy is not None:
+            session_info['shot_noise'] = shot
+        if track_snr:
+            session_info['snrs'] = snrs
         
         # Save immediately to free memory
         session_name = session_path.name
-        edge_file = session_path / "edge_cells.npy"
-        np.save(edge_file, edge_cells)
-
-        shot_file = session_path / "shot_noise.npy"
-        np.save(shot_file, shot)
-
         patches_file = self.output_dir / f"{session_name}_patches.npy"
-        
         np.save(patches_file, cell_patches)
 
         # Force garbage collection to free memory
-        del cell_patches, mean_img, corrmap, session_data, shot
+        del cell_patches, mean_img, corrmap, session_data
         gc.collect()
         
         return session_info
@@ -391,13 +424,18 @@ class Suite3DProcessor:
         combined_patches = np.zeros((total_cells, self.nchannel, self.nbz, self.nby, self.nbx), 
                                    dtype=np.float32)
         
-        all_shot, all_edge = [], []
+        all_shot, all_edge, all_peak, all_contamination, all_snrs, all_footprint_size = [], [], [], [], [], []
         
         # Load and concatenate each session
         current_idx = 0
         for i, session_info in enumerate(session_info_list):
             session_name = session_info['session_name']
             n_cells = session_info['n_cells']
+            edge_cells = session_info['edge_cells']
+            footprint_size = session_info['footprint_size']
+
+            all_edge.append(edge_cells)
+            all_footprint_size.append(footprint_size)
             
             if n_cells == 0:
                 continue
@@ -420,13 +458,25 @@ class Suite3DProcessor:
             else:
                 print(f"Warning: {patches_file} not found")
 
-            shot_file = self.data_dir / session_name / "shot_noise.npy"
-            all_shot.append(np.load(shot_file))
-            os.remove(shot_file)
+            if 'shot_noise' in session_info:
+                all_shot.append(session_info['shot_noise'])
+            else:
+                all_shot.append(np.zeros(n_cells, dtype=np.float32))
+            
+            if 'peak_vals' in session_info:
+                all_peak.append(session_info['peak_vals'])
+            else:
+                all_peak.append(np.zeros(n_cells, dtype=np.float32))
+            
+            if 'snrs' in session_info:
+                all_snrs.append(session_info['snrs'])
+            else:
+                all_snrs.append(np.zeros(n_cells, dtype=np.float32))
 
-            edge_file = self.data_dir / session_name / "edge_cells.npy"
-            all_edge.append(np.load(edge_file))
-            os.remove(edge_file)
+            if 'contamination_factors' in session_info:
+                all_contamination.append(session_info['contamination_factors'])
+            else:
+                all_contamination.append(np.zeros(n_cells, dtype=np.float32))
 
         all_shot = np.concatenate(all_shot)
         combined_shot_file = self.output_dir / "all_sessions_shot_noise.npy"
@@ -435,6 +485,24 @@ class Suite3DProcessor:
         all_edge = np.concatenate(all_edge)
         combined_edge_file = self.output_dir / "all_sessions_edge_cells.npy"
         np.save(combined_edge_file, all_edge)
+
+        curation_features_dict = self.output_dir / "curation_features.npy"
+        curation_features = {
+            "Footprint Size": np.concatenate(all_footprint_size),
+            "Mean Intensity": np.mean(combined_patches[:, 0, :, :, :], axis=(1,2,3)),
+            "Mean Correlation": np.mean(combined_patches[:, 1, :, :, :], axis=(1,2,3)),
+            "ROI Shot Noise": all_shot
+        }
+        if all_peak:
+            all_peak = np.concatenate(all_peak)
+            curation_features['Peak Value'] = all_peak
+        if all_contamination:
+            all_contamination = np.concatenate(all_contamination)
+            curation_features['Contamination Factor'] = all_contamination
+        if all_snrs:
+            all_snrs = np.concatenate(all_snrs)
+            curation_features['Voxel SNR'] = all_snrs
+        np.save(curation_features_dict, curation_features)
 
         # Save combined dataset
         combined_patches_file = self.output_dir / "all_sessions_patches.npy"

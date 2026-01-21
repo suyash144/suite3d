@@ -9,10 +9,9 @@ from bokeh.layouts import gridplot
 class HistViewer:
     """Component for viewing histograms of data properties with population, cluster, and individual sample comparisons"""
     
-    def __init__(self, dataset, shot_noise=None, footprint_size=None, sample_indices=None, use_sampling=False):
+    def __init__(self, dataset, properties, sample_indices=None, use_sampling=False):
         self.dataset = dataset
-        self.shot_noise = shot_noise
-        self.footprint_size = footprint_size
+        self.properties = properties
         self.sample_indices = sample_indices
         self.use_sampling = use_sampling
         
@@ -23,9 +22,7 @@ class HistViewer:
         self.current_individual_properties = None
         
         # Histogram properties to compute
-        self.property_names = [
-            'Mean Image Intensity', 'Mean Correlation', 'Footprint Size', 'Shot Noise'
-        ]
+        self.property_names = [k for k, v in self.properties.items() if v is not None and len(np.unique(v)) > 1]
         
         # UI Controls
         self.property_selector = pn.widgets.Select(
@@ -60,12 +57,6 @@ class HistViewer:
         self.on_individual_sample_changed = None
 
         # Initialize
-        if self.shot_noise is None:
-            self.property_names.remove('Shot Noise')
-            self.property_selector.options = self.property_names
-        if self.footprint_size is None:
-            self.property_names.remove('Footprint Size')
-            self.property_selector.options = self.property_names
         if self.dataset is not None:
             self._compute_population_histograms()
     
@@ -97,15 +88,16 @@ class HistViewer:
         else:
             sample_data = self.dataset[sample_indices]            
         
-        properties = {}
-        properties['Mean Image Intensity'] = np.mean(sample_data[:, 0, :, :, :], axis=(1, 2, 3))
-        properties['Mean Correlation'] = np.mean(sample_data[:, 1, :, :, :], axis=(1, 2, 3))
-        if self.shot_noise is not None:
-            properties['Shot Noise'] = self.shot_noise[sample_indices]
-        if self.footprint_size is not None:
-            properties['Footprint Size'] = self.footprint_size[sample_indices]
+        props = {}
+        for key, value in self.properties.items():
+            if value is not None:
+                if key == 'Edge Cells':
+                    # Special case: Edge Cells is boolean mask
+                    props[key] = value[sample_indices].astype(np.float32)
+                else:
+                    props[key] = value[sample_indices]
         
-        return properties
+        return props
 
     def _compute_population_histograms(self):
         """Compute histograms for the entire population (or sample)"""
@@ -158,6 +150,41 @@ class HistViewer:
         except Exception as e:
             self.status_text.object = f"**Error:** Failed to compute population histograms: {str(e)}"
     
+    def _compute_single_property_histogram(self, prop_name):
+        """Compute histogram for a single property (used when adding properties dynamically)"""
+        if self.dataset is None or self.properties.get(prop_name) is None:
+            return
+
+        try:
+            if prop_name != 'Probability':
+                # Use same sampling strategy as population histograms
+                if self.use_sampling and self.sample_indices is not None:
+                    indices_to_use = self.sample_indices
+                else:
+                    indices_to_use = np.arange(min(10000, self.dataset.shape[0]))
+
+                values = self.properties[prop_name][indices_to_use]
+            else:
+                values = self.properties[prop_name]
+            hist, bin_edges = np.histogram(values, bins=self.n_bins_slider.value)
+
+            # Normalize to PDF
+            bin_width = bin_edges[1] - bin_edges[0]
+            pdf_hist = hist / (np.sum(hist) * bin_width) if np.sum(hist) > 0 else hist
+
+            if self.population_cache is None:
+                self.population_cache = {}
+
+            self.population_cache[prop_name] = {
+                'hist': pdf_hist,
+                'bin_edges': bin_edges,
+                'values': values
+            }
+
+            self._update_plot()
+        except Exception as e:
+            self.status_text.object = f"**Error:** Failed to compute histogram for {prop_name}: {str(e)}"
+
     def load_cluster_data(self, cluster_id, display_data):
         """Load and cache cluster histograms"""
         if self.dataset is None:
@@ -233,6 +260,44 @@ class HistViewer:
             
         except Exception as e:
             self.status_text.object = f"**Error:** Failed to process individual sample: {str(e)}"
+    
+    def remove_property(self, name):
+        """Dynamically remove a property option"""
+        if name in self.property_names:
+            self.property_names.remove(name)
+            self.property_selector.options = self.property_names
+            self.property_selector.param.trigger('options')
+            # Reset to first property if current selection was removed
+            if self.property_selector.value == name and self.property_names:
+                self.property_selector.value = self.property_names[0]
+        if name in self.properties:
+            self.properties[name] = None
+        if self.population_cache and name in self.population_cache:
+            del self.population_cache[name]
+        self._update_plot()
+
+    def update_property(self, name, values):
+        """Update an existing property with new values from the app orchestrator
+
+        Args:
+            name: Name of the property to update
+            values: New values for the property (array-like)
+        """
+        self.properties[name] = values
+
+        # Add to property names if not already present
+        if name not in self.property_names:
+            self.property_names.append(name)
+            self.property_selector.options = self.property_names
+            self.property_selector.param.trigger('options')
+
+        # Clear all cached cluster histograms since property values changed
+        # We clear the entire cache because load_cluster_data checks if cluster_id
+        # is in cache and returns early - partial cache would cause missing histograms
+        self.cluster_cache = {}
+
+        # Recompute the population histogram for this property
+        self._compute_single_property_histogram(name)
     
     def _update_plot(self):
         """Update the histogram plot based on current selections"""
