@@ -2,7 +2,7 @@ import numpy as np
 import panel as pn
 import h5py
 from bokeh.plotting import figure
-from bokeh.models import Span, ColumnDataSource
+from bokeh.models import Span, ColumnDataSource, BoxAnnotation
 from bokeh.palettes import Blues8, Greens8, Reds8
 from bokeh.layouts import gridplot
 
@@ -41,6 +41,10 @@ class HistViewer:
         # Status text
         self.status_text = pn.pane.Markdown("**Status:** Initializing...", width=200)
         
+        # Threshold state
+        self._current_threshold_mask = None
+        self.threshold_box = None  # Will be created with plot
+
         # Histogram plot
         self.hist_plot = self._create_empty_plot()
         self.hist_sources = {
@@ -55,6 +59,57 @@ class HistViewer:
         
         # Callback for individual sample changes (set by BoxViewer)
         self.on_individual_sample_changed = None
+
+        # Threshold classification widgets
+        self.threshold_mode = pn.widgets.RadioButtonGroup(
+            name="Threshold Mode",
+            options=["Off", "Below", "Above", "Range"],
+            value="Off",
+            width=200
+        )
+
+        self.threshold_slider = pn.widgets.FloatSlider(
+            name="Threshold",
+            start=0, end=1, value=0.5,
+            step=0.01,
+            width=200,
+            visible=False
+        )
+
+        self.threshold_range = pn.widgets.RangeSlider(
+            name="Range",
+            start=0, end=1, value=(0.25, 0.75),
+            step=0.01,
+            width=200,
+            visible=False
+        )
+
+        self.threshold_preview = pn.pane.Markdown("", width=200)
+
+        self.apply_cell_btn = pn.widgets.Button(
+            name="CELL",
+            button_type='danger',
+            width=95,
+            visible=False
+        )
+
+        self.apply_not_cell_btn = pn.widgets.Button(
+            name="NOT CELL",
+            button_type='danger',
+            button_style='outline',
+            width=95,
+            visible=False
+        )
+
+        # Threshold callbacks
+        self.threshold_mode.param.watch(self._on_threshold_mode_change, 'value')
+        self.threshold_slider.param.watch(self._on_threshold_change, 'value')
+        self.threshold_range.param.watch(self._on_threshold_change, 'value')
+        self.apply_cell_btn.on_click(self._on_apply_cell_click)
+        self.apply_not_cell_btn.on_click(self._on_apply_not_cell_click)
+
+        # Callback for threshold classification (set by AppOrchestrator)
+        self.on_threshold_classify = None
 
         # Initialize
         if self.dataset is not None:
@@ -71,6 +126,17 @@ class HistViewer:
         )
         plot.title.text_font_size = "12pt"
         plot.yaxis.ticker.desired_num_ticks = 0
+
+        self.threshold_box = BoxAnnotation(
+            fill_alpha=0.3,
+            fill_color='orange',
+            line_color='orange',
+            line_width=2,
+            line_dash='dashed',
+            visible=False
+        )
+        plot.add_layout(self.threshold_box)
+
         return plot
     
     def _compute_sample_properties(self, sample_indices):
@@ -399,6 +465,10 @@ class HistViewer:
     def _on_property_change(self, event):
         """Handle property selector changes"""
         self._update_plot()
+        # Update threshold bounds when property changes
+        if self.threshold_mode.value != "Off":
+            self._update_threshold_bounds()
+            self._update_threshold_visualization()
     
     def _on_display_change(self, event):
         """Handle display option changes"""
@@ -422,23 +492,137 @@ class HistViewer:
         self.current_individual_properties = None
         self.status_text.object = "**Status:** Cache cleared"
         self._update_plot()
-    
+
+    def _on_threshold_mode_change(self, event):
+        """Handle threshold mode changes - show/hide appropriate widgets"""
+        mode = event.new
+
+        # Show/hide single vs range slider
+        self.threshold_slider.visible = mode in ["Above", "Below"]
+        self.threshold_range.visible = mode == "Range"
+
+        # Show/hide action buttons
+        show_buttons = mode != "Off"
+        self.apply_cell_btn.visible = show_buttons
+        self.apply_not_cell_btn.visible = show_buttons
+
+        # Update slider ranges based on current property
+        if mode != "Off":
+            self._update_threshold_bounds()
+
+        # Update visualization
+        self._update_threshold_visualization()
+
+    def _update_threshold_bounds(self):
+        """Update threshold slider bounds based on current property data"""
+        selected_property = self.property_selector.value
+        if self.population_cache and selected_property in self.population_cache:
+            values = self.population_cache[selected_property]['values']
+            data_min, data_max = float(np.nanmin(values)), float(np.nanmax(values))
+
+            # Add small margin
+            margin = (data_max - data_min) * 0.02
+
+            # Update single slider
+            self.threshold_slider.start = data_min - margin
+            self.threshold_slider.end = data_max + margin
+            self.threshold_slider.value = (data_min + data_max) / 2
+            self.threshold_slider.step = (data_max - data_min) / 100
+
+            # Update range slider
+            self.threshold_range.start = data_min - margin
+            self.threshold_range.end = data_max + margin
+            self.threshold_range.value = (
+                data_min + (data_max - data_min) * 0.25,
+                data_min + (data_max - data_min) * 0.75
+            )
+            self.threshold_range.step = (data_max - data_min) / 100
+
+    def _on_threshold_change(self, event):
+        """Handle threshold slider value changes"""
+        self._update_threshold_visualization()
+
+    def _update_threshold_visualization(self):
+        """Update BoxAnnotation and preview count based on current threshold"""
+        mode = self.threshold_mode.value
+
+        if mode == "Off" or not self.population_cache:
+            self.threshold_box.visible = False
+            self.threshold_preview.object = ""
+            self._current_threshold_mask = None
+            return
+
+        selected_property = self.property_selector.value
+        if selected_property not in self.population_cache:
+            self.threshold_box.visible = False
+            self.threshold_preview.object = ""
+            self._current_threshold_mask = None
+            return
+
+        # Get property values
+        values = self.population_cache[selected_property]['values']
+
+        # Calculate affected indices based on mode
+        if mode == "Below":
+            threshold = self.threshold_slider.value
+            mask = values < threshold
+            self.threshold_box.left = None  # Extends to left edge
+            self.threshold_box.right = threshold
+        elif mode == "Above":
+            threshold = self.threshold_slider.value
+            mask = values > threshold
+            self.threshold_box.left = threshold
+            self.threshold_box.right = None  # Extends to right edge
+        elif mode == "Range":
+            low, high = self.threshold_range.value
+            mask = (values >= low) & (values <= high)
+            self.threshold_box.left = low
+            self.threshold_box.right = high
+
+        self.threshold_box.visible = True
+        self._current_threshold_mask = mask
+
+        # Calculate preview counts
+        count = int(np.sum(mask))
+        total = len(values)
+        percentage = (count / total) * 100 if total > 0 else 0
+
+        self.threshold_preview.object = f"**Preview:** {count:,} points ({percentage:.1f}%)"
+
+    def get_threshold_mask(self):
+        """Return boolean mask of points matching current threshold (for orchestrator)"""
+        return self._current_threshold_mask
+
+    def _on_apply_cell_click(self, event):
+        """Handle 'Apply as CELL' button click"""
+        if self.on_threshold_classify:
+            self.on_threshold_classify('cell')
+
+    def _on_apply_not_cell_click(self, event):
+        """Handle 'Apply as NOT CELL' button click"""
+        if self.on_threshold_classify:
+            self.on_threshold_classify('not_cell')
+
     def get_layout(self):
         """Return the complete HistViewer layout"""
         # Main controls in a vertical layout
         controls = pn.Column(
-            "### Histogram Viewer",
             self.property_selector,
             pn.Spacer(height=10),
             self.n_bins_slider,
-            pn.Spacer(height=10),
+            "### Threshold Classification",
+            self.threshold_mode,
+            self.threshold_slider,
+            self.threshold_range,
+            self.threshold_preview,
+            pn.Row(self.apply_cell_btn, self.apply_not_cell_btn, width=200),
             self.status_text,
             width=240,
             margin=(10, 10)
         )
-        
+
         plot_pane = pn.pane.Bokeh(self.hist_plot, sizing_mode='fixed', height=350, width=700)
-        
+
         return pn.Row(
             pn.Spacer(width=20),
             plot_pane,

@@ -87,16 +87,16 @@ class AppOrchestrator:
         
         # Classification buttons
         self.classify_cluster_cell_button = pn.widgets.Button(
-            name='Mark Cluster as CELL', 
+            name='CELL', 
             button_type='danger',
-            width=200
+            width=95
         )
         
         self.classify_cluster_not_cell_button = pn.widgets.Button(
-            name='Mark Cluster as NOT CELL', 
+            name='NOT CELL', 
             button_type='danger',
             button_style='outline',
-            width=200
+            width=95
         )
         
         self.reset_button = pn.widgets.Button(
@@ -287,6 +287,10 @@ class AppOrchestrator:
 
             if self.box_viewer and self.hist_viewer:
                 self.box_viewer.on_sample_changed = self.hist_viewer.update_individual_sample
+
+            # Connect threshold classification callback
+            if self.hist_viewer:
+                self.hist_viewer.on_threshold_classify = self._classify_by_threshold
 
             # Sync hist viewer property selection to UMAP view mode
             if self.hist_viewer and self.umap_visualiser:
@@ -517,10 +521,60 @@ class AppOrchestrator:
             self.hist_viewer.update_property('Probability', self.cell_probs)
 
         self.status_text.object = f"**Status:** Classified cluster {self.selected_cluster} ({cluster_size:,} points) as '{classification_type}' | Total - Cells: {cell_count:,}, Not cells: {not_cell_count:,}"
-        
+
         # Reset selection
         self.selected_cluster = None
-    
+
+    def _classify_by_threshold(self, classification_type):
+        """Classify points based on histogram threshold selection (global scope)"""
+        if self.hist_viewer is None:
+            return
+
+        # Get the threshold mask from hist_viewer
+        mask = self.hist_viewer.get_threshold_mask()
+        if mask is None or not np.any(mask):
+            self.status_text.object = "**Status:** No points in threshold range"
+            return
+
+        # Map from population sample indices to original full_data indices
+        # The mask corresponds to the values in population_cache, which uses sample_indices
+        if self.use_sampling and self.sample_indices is not None:
+            threshold_indices = self.sample_indices[mask]
+        else:
+            threshold_indices = np.where(mask)[0]
+
+        count = len(threshold_indices)
+
+        # Apply classification to full_data
+        self.full_data.loc[threshold_indices, 'classification'] = classification_type
+
+        # Update display data
+        self.prepare_display_data()
+
+        # Update UMAP visualiser
+        if self.umap_visualiser:
+            self.umap_visualiser.update_data(self.display_data, False)
+
+        # Update ML model training data
+        self.labelled_features_idx.extend(threshold_indices)
+        label_val = 1 if classification_type == 'cell' else 0
+        self.labels.extend([label_val] * len(threshold_indices))
+
+        self.curation_features = np.hstack([self.available_features[feat] for feat in self.curation_features_to_use])
+
+        if len(np.unique(self.labels)) > 1:
+            # Fit model if we have positive and negative samples
+            self.linear_model.fit(self.curation_features[self.labelled_features_idx], self.labels)
+            class_idx = np.argwhere(self.linear_model.classes_ == 1)[0][0]
+            self.cell_probs = self.linear_model.predict_proba(self.curation_features[self.sample_indices])[:, class_idx]
+            self.umap_visualiser.set_probs(self.cell_probs)
+            self.hist_viewer.update_property('Probability', self.cell_probs)
+
+        # Update status
+        cell_count = sum(1 for c in self.full_data['classification'] if c == 'cell')
+        not_cell_count = sum(1 for c in self.full_data['classification'] if c == 'not_cell')
+        self.status_text.object = f"**Status:** Threshold classified {count:,} points as '{classification_type}' | Total - Cells: {cell_count:,}, Not cells: {not_cell_count:,}"
+
     def reset_classifications(self, event):
         """Reset all classifications"""
         if self.full_data is None:
@@ -601,10 +655,8 @@ class AppOrchestrator:
         )
 
         classification_controls = [
-            "## Cluster Classification",
-            self.classify_cluster_cell_button,
-            pn.Spacer(height=10),
-            self.classify_cluster_not_cell_button,
+            "### Cluster Classification",
+            pn.Row(self.classify_cluster_cell_button, self.classify_cluster_not_cell_button, width=200),
             pn.Spacer(height=10),
             self.reset_button,
             pn.Spacer(height=10),
