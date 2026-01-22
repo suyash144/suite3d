@@ -437,11 +437,12 @@ class HistViewer:
             margin=(10, 10)
         )
         
-        plot_pane = pn.pane.Bokeh(self.hist_plot, sizing_mode='fixed', height=350)
+        plot_pane = pn.pane.Bokeh(self.hist_plot, sizing_mode='fixed', height=350, width=700)
         
         return pn.Row(
-            plot_pane,
             pn.Spacer(width=20),
+            plot_pane,
+            pn.Spacer(width=30),
             controls,
             sizing_mode='stretch_width',
             margin=(10, 0)

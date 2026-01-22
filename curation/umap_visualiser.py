@@ -212,7 +212,7 @@ class UMAPVisualiser:
                 colors[i] = Viridis256[int(norm_val[i] * 255)]
         elif self.view_mode == "contamination":
             # For all ROIs, use contamination to set colors
-            contamination = self.properties.get('Contamination', None)
+            contamination = self.properties.get('Contamination Factor', None)
             norm_val = (contamination - np.min(contamination)) / (np.max(contamination) - np.min(contamination) + 1e-8)
             for i in range(n_points):
                 colors[i] = Reds256[int(norm_val[i] * 255)]

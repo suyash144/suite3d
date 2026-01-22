@@ -362,7 +362,7 @@ class BoxViewer:
         return pn.Column(
             main_controls,
             plots_section,
-            width=900
+            width=800
         )
     
     def __del__(self):

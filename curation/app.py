@@ -196,7 +196,8 @@ class AppOrchestrator:
             self.features_toggle = pn.widgets.MultiChoice(
                 options=list(self.available_features.keys()),
                 value=['PCA'],
-                solid=False
+                solid=False,
+                width=200,
             )
             self.features_toggle.param.watch(self.update_curation_features, 'value')
 
@@ -440,6 +441,7 @@ class AppOrchestrator:
         try:
             self.status_text.object = "**Status:** Recomputing UMAP, please wait..."
             self.UMAPbutton.name = "Running UMAP..."
+            self.UMAPbutton.button_style = 'outline' 
             start = time.time()
             reducer = UMAP(n_components=2, random_state=42, n_neighbors=30, min_dist=0.1, metric='euclidean')
             new_embedding = reducer.fit_transform(self.curation_features)
@@ -454,12 +456,13 @@ class AppOrchestrator:
             
             # Update UMAP visualiser
             if self.umap_visualiser:
-                self.umap_visualiser.update_data(self.display_data)
+                self.umap_visualiser.update_data(self.display_data, False)
                 self.view_toggle.value = 'cluster'  # Reset to cluster view
             
             end = time.time()
             self.UMAPtime = np.round(end - start, 0)
             self.UMAPbutton.name = f"Rerun UMAP ({self.UMAPtime}s)"
+            self.UMAPbutton.button_style = 'solid'
             self.status_text.object = "**Status:** UMAP recomputation complete"
         
         except Exception as e:
